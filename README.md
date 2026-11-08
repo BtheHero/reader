@@ -41,7 +41,7 @@ the timeline. On phones there's a bottom tab bar (Home, Videos, follow +, Starre
 - Links in posts are clickable in the timeline (the post's own links and bare web addresses; for X accounts also
   @mentions and #hashtags). X reposts are labelled "↻ @account reposted". Hold-press (or right-click) a reposted or quoted account to follow it or block it; blocking hides its reposts and the posts quoting it (unblock under "Blocked accounts" in the menu).
 - **Filters** (per feed, in its Edit dialog): hide posts containing words, only show posts containing words, only
-  posts with pictures or video, and for X accounts hide reposts / replies. Hidden posts don't count as unread; the
+  posts with pictures or video, and for X accounts hide reposts / replies. A feed can also be set to "Text only", which hides its pictures and videos. Hidden posts don't count as unread; the
   feed's profile shows how many are hidden.
 - **Groups**: give a feed a group in the Follow or Edit dialog. Groups appear in the sidebar (fold open/closed, unread
   count, ⋯ to rename or remove) and each has its own timeline. OPML export / import keeps groups as folders.

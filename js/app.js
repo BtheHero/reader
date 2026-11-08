@@ -681,7 +681,7 @@
     renderList(true);
   }
 
-  const hasFilters = (f) => !!f.filters && !!(f.filters.mute || f.filters.only || f.filters.noReposts || f.filters.noReplies || f.filters.mediaOnly);
+  const hasFilters = (f) => !!f.filters && !!(f.filters.mute || f.filters.only || f.filters.noReposts || f.filters.noReplies || f.filters.mediaOnly || f.filters.textOnly);
 
   function markActiveNav() {
     for (const b of document.querySelectorAll(".side .nav, .tabs [data-view]")) b.classList.toggle("active", b.dataset.view === S.view);
@@ -911,9 +911,11 @@
       if (S.settings.previews && snip && snip !== it.title && !isVideo(it)) { const p = el("p", "ptext"); p.append(richText(it, f, 280, false)); li.append(p); }
     }
 
-    const pics = it.video ? [] : gallery(it);
+    // "Text only" feeds: no pictures or videos in the timeline
+    const textOnly = !!(f.filters && f.filters.textOnly);
+    const pics = it.video || textOnly ? [] : gallery(it);
     if (pics.length) li.append(galleryEl(pics));
-    else if (it.image || it.video) {
+    else if (!textOnly && (it.image || it.video)) {
       const box = el("div", "pmedia" + (it.video && it.video.short ? " short" : "") + (it.video ? (it.video.audio ? " audio" : " playable") : ""));
       if (it.image && !(it.video && it.video.audio)) {
         const img = el("img");
@@ -934,7 +936,7 @@
       li.append(box);
     }
 
-    if (it.quote) li.append(quoteEl(it, false));
+    if (it.quote) li.append(quoteEl(it, false, textOnly));
 
     const acts = el("div", "pactions");
     const star = actionBtn("star", "star", it.star ? "Unstar" : "Star");
@@ -1151,7 +1153,8 @@
     art.textContent = "";
     const pf = feedById(it.feedId);
     const episode = pf && pf.podcast && isEpisode(it, pf);
-    art.classList.toggle("has-video", !!it.video && !it.video.audio && !episode);
+    const noMedia = !!(f.filters && f.filters.textOnly) && !episode;     // a "Text only" source: no player either
+    art.classList.toggle("has-video", !!it.video && !it.video.audio && !episode && !noMedia);
     if (episode) {
       const box = el("div", "podhead");
       const img = el("img", "podbig"); img.src = it.image || ""; img.alt = ""; img.referrerPolicy = "no-referrer";
@@ -1159,7 +1162,7 @@
       play.onclick = () => { podPlay(it); setTimeout(() => { play.textContent = Pod.playing ? "❚❚ Pause" : "▶ Resume"; }, 600); };
       box.append(img, play);
       art.append(box);
-    } else if (it.video) art.append(playerFor(it));
+    } else if (it.video && !noMedia) art.append(playerFor(it));
     const head = el("header");
     const src = el("a", "src");
     // A repost, or a quoted post opened on its own: the original account in the header
@@ -1187,8 +1190,11 @@
     const content = el("div", "content");
     const clean = Parse.sanitize(it.html, it.link || f.siteUrl);
     content.innerHTML = clean;
+    // "Text only" feeds: their pictures stay hidden in the open post too
+    const textOnly = !!(f.filters && f.filters.textOnly);
+    if (textOnly) for (const m of content.querySelectorAll("img, picture, figure:not(:has(figcaption)), video")) m.remove();
     // Show the feed's picture when the article itself has none (videos have the player instead)
-    if (it.image && !content.querySelector("img") && !(it.video && !it.video.audio)) {
+    if (!textOnly && it.image && !content.querySelector("img") && !(it.video && !it.video.audio)) {
       const img = el("img", "lead");
       img.src = it.image; img.alt = ""; img.referrerPolicy = "no-referrer";
       img.onerror = () => img.remove();
@@ -1198,7 +1204,7 @@
     if (it.video) linkTimestamps(content);
     if (!Parse.plain(clean).length && !content.querySelector("img") && !it.video) content.append(el("p", "muted", "This feed only shares a headline."));
     art.append(head, content);
-    if (it.quote) art.append(quoteEl(it, true));
+    if (it.quote) art.append(quoteEl(it, true, textOnly));
     if (it.link) {
       const more = el("a", "btn readmore", (it.video && it.video.kind === "youtube" ? "Watch on " : "Read on ") + (host(it.link) || "the site"));
       more.href = it.link; more.target = "_blank"; more.rel = "noopener noreferrer";
@@ -1894,7 +1900,7 @@
 
   // A quoted post, framed like on X: its account (picture, name, @handle), text and picture or video.
   // The whole card opens the quoted post on X.
-  function quoteEl(it, full) {
+  function quoteEl(it, full, textOnly) {
     const q = it.quote;
     const card = el("div", "quote" + (full ? " full" : ""));
     card.tabIndex = 0;
@@ -1908,7 +1914,7 @@
     card.append(head);
     const text = Parse.plain(q.html, full ? 2000 : 400);
     if (text) card.append(el("p", "qtext", text));
-    if (q.image) {
+    if (q.image && !textOnly) {
       const box = el("div", "qmedia");
       const img = el("img"); img.src = q.image; img.alt = ""; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
       // A video keeps its box and ▶ even if the thumbnail doesn't load; a picture that fails goes
@@ -2200,6 +2206,7 @@
     $("flt-mute").value = r.mute || "";
     $("flt-only").value = r.only || "";
     $("flt-media").checked = !!r.mediaOnly;
+    $("flt-text").checked = !!r.textOnly;
     $("flt-reposts").checked = !!r.noReposts;
     $("flt-replies").checked = !!r.noReplies;
     $("flt-x").hidden = !f.x;
@@ -2218,7 +2225,7 @@
     editing.group = $("feed-group").value.trim().replace(/\s+/g, " ");
     if (!editing.group) delete editing.group;
     if (editing.group && $("feed-grouponly").checked) editing.groupOnly = true; else delete editing.groupOnly;
-    const filters = { mute: $("flt-mute").value.trim(), only: $("flt-only").value.trim(), mediaOnly: $("flt-media").checked,
+    const filters = { mute: $("flt-mute").value.trim(), only: $("flt-only").value.trim(), mediaOnly: $("flt-media").checked, textOnly: $("flt-text").checked,
       noReposts: !!editing.x && $("flt-reposts").checked, noReplies: !!editing.x && $("flt-replies").checked };
     if (hasFilters({ filters })) editing.filters = filters; else delete editing.filters;
     if (YT_FEED.test(editing.url)) {
