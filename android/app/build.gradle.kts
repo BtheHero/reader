@@ -44,6 +44,8 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.activity:activity-ktx:1.9.3")
+    implementation("androidx.core:core:1.13.1")
+    implementation("androidx.activity:activity:1.9.3")
+    // AndroidX brings Kotlin's standard library in two versions; line them up on one
+    implementation(platform("org.jetbrains.kotlin:kotlin-bom:1.8.22"))
 }
