@@ -743,12 +743,7 @@
         row.append(b);
         empty.append(row);
       } else if (S.feeds.length && S.settings.unreadOnly && !S.query && S.view !== "starred") {
-        const again = el("div", "actions center");
-        const showRead = el("button", "btn", "Show read posts");
-        showRead.onclick = () => { S.settings.unreadOnly = false; saveSettings(); renderList(); };
-        const pullHint = el("p", "hint", "Pull down to check for new posts.");
-        again.append(showRead);
-        empty.append(pullHint, again);
+        empty.append(el("p", "hint", "Pull down to check for new posts."));
       }
       if (!S.feeds.length) {
         empty.append(el("h3", null, "Welcome to BT Feeder"), el("p", null, "Follow your favourite sites in one place. Everything stays on this device."));
