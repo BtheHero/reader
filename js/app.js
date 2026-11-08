@@ -417,28 +417,33 @@
     if (S.current === it.key) syncReaderButtons(it);
   }
 
-  // Everything in this view (not only what's been scrolled to) becomes read and leaves the timeline;
-  // in Podcasts, episodes become played. Undo puts it all back.
+  // Everything in this view (not only what's been scrolled to) becomes read and leaves the timeline, the posts
+  // already read included; in Podcasts, episodes become played. If read posts were being shown, they're hidden
+  // again. Undo puts it all back.
   function markAllRead() {
     const pods = S.view === "podcasts";
-    const list = S.shown.map(k => S.items.get(k)).filter(i => i && (pods ? !i.watched : !i.read));
-    if (!list.length) return toast(pods ? "No episodes to clear" : "Nothing unread here");
-    const before = list.map(i => ({ read: i.read, watched: i.watched }));
-    list.forEach(i => {
-      if (pods) i.watched = true;
-      if (!i.read) { i.read = true; i.readAt = Date.now(); Account.itemChanged(i, "read"); }
+    const shown = S.shown.map(k => S.items.get(k)).filter(Boolean);
+    if (!shown.length) return toast(pods ? "No episodes to clear" : "Nothing to clear here");
+    const before = shown.map(i => ({ read: i.read, watched: i.watched, kept: S.keep.has(i.key) }));
+    const wasShowingRead = !S.settings.unreadOnly;
+    const changed = [];
+    shown.forEach(i => {
+      if (pods && !i.watched) { i.watched = true; changed.push(i); }
+      if (!i.read) { i.read = true; i.readAt = Date.now(); Account.itemChanged(i, "read"); if (!changed.includes(i)) changed.push(i); }
       S.keep.delete(i.key);
     });
-    saveItems(list);
+    if (wasShowingRead) { S.settings.unreadOnly = true; saveSettings(); }
+    saveItems(changed);
     renderFeeds();
     renderList(true);
-    toast((pods ? "Cleared " + list.length + " episode" : "Cleared " + list.length + " post") + (list.length === 1 ? "" : "s"), "Undo", () => {
-      list.forEach((i, n) => {
+    toast("Cleared " + shown.length + (pods ? " episode" : " post") + (shown.length === 1 ? "" : "s"), "Undo", () => {
+      shown.forEach((i, n) => {
         i.watched = before[n].watched;
         if (i.read !== before[n].read) { i.read = before[n].read; i.readAt = Date.now(); Account.itemChanged(i, "read"); }
-        S.keep.add(i.key);
+        if (before[n].kept || before[n].read) S.keep.add(i.key);
       });
-      saveItems(list);
+      if (wasShowingRead) { S.settings.unreadOnly = false; saveSettings(); }
+      saveItems(changed);
       renderFeeds();
       renderList(true);
     });
