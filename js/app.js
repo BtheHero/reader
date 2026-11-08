@@ -133,7 +133,7 @@
         read: old ? old.read : false, readAt: old ? old.readAt || 0 : 0, star: old ? old.star : false, seen: old ? old.seen : now,
         pos: old ? old.pos || 0 : 0, dur: old ? old.dur || 0 : 0, watched: old ? !!old.watched : false };
       if (old && old.ytDur != null) { it.ytDur = old.ytDur; it.ytLive = old.ytLive; }
-      if (!old) added++;
+      if (!old) { added++; if (S.newKeys) S.newKeys.add(key); }
       if (!old || old.title !== it.title || old.html !== it.html || old.date !== it.date || old.image !== it.image || JSON.stringify(old.video || null) !== JSON.stringify(it.video)) {
         S.items.set(key, it); changed.push(it);
       }
@@ -155,7 +155,7 @@
   async function refresh(feeds, { quiet } = {}) {
     if (S.refreshing || !feeds.length) return;
     S.refreshing = true;
-    $("refresh-btn").classList.add("spin");
+    S.newKeys = new Set();
     if (!quiet) status("Refreshing " + feeds.length + (feeds.length === 1 ? " feed…" : " feeds…"));
     let added = 0, failed = 0;
     try {
@@ -189,12 +189,18 @@
       }
       saveFeeds();
       status("");
-      if (!quiet || added) toast(added ? added + " new article" + (added === 1 ? "" : "s") : "No new articles" + (failed ? " · " + failed + " feed" + (failed === 1 ? "" : "s") + " failed" : ""));
+      const failNote = failed ? " · " + failed + " feed" + (failed === 1 ? "" : "s") + " failed" : "";
+      if (S.view === "podcasts" && !quiet) {
+        // Count new episodes only (videos over the channel's minimum length), once their lengths are known
+        await podDurations();
+        const pods = podFeeds();
+        const n = [...S.newKeys].map(k => S.items.get(k)).filter(i => i && pods.has(i.feedId) && isEpisode(i, pods.get(i.feedId))).length;
+        toast(n ? n + " new podcast" + (n === 1 ? "" : "s") : "No new podcasts" + failNote);
+      } else if (!quiet || added) toast(added ? added + " new post" + (added === 1 ? "" : "s") : "No new posts" + failNote);
     } catch (e) {
       status(navigator.onLine === false ? "You're offline. Showing saved articles." : e.message, true);
     } finally {
       S.refreshing = false;
-      $("refresh-btn").classList.remove("spin");
       endPull();
       podDurations();
       renderFeeds();
@@ -407,15 +413,27 @@
     if (S.current === it.key) syncReaderButtons(it);
   }
 
+  // Everything in this view (not only what's been scrolled to) becomes read and leaves the timeline;
+  // in Podcasts, episodes become played. Undo puts it all back.
   function markAllRead() {
-    const list = S.shown.map(k => S.items.get(k)).filter(i => i && !i.read);
-    if (!list.length) return toast("Nothing unread here");
-    list.forEach(i => { i.read = true; i.readAt = Date.now(); Account.itemChanged(i, "read"); });
+    const pods = S.view === "podcasts";
+    const list = S.shown.map(k => S.items.get(k)).filter(i => i && (pods ? !i.watched : !i.read));
+    if (!list.length) return toast(pods ? "No episodes to clear" : "Nothing unread here");
+    const before = list.map(i => ({ read: i.read, watched: i.watched }));
+    list.forEach(i => {
+      if (pods) i.watched = true;
+      if (!i.read) { i.read = true; i.readAt = Date.now(); Account.itemChanged(i, "read"); }
+      S.keep.delete(i.key);
+    });
     saveItems(list);
     renderFeeds();
     renderList(true);
-    toast("Marked " + list.length + " as read", "Undo", () => {
-      list.forEach(i => { i.read = false; i.readAt = Date.now(); Account.itemChanged(i, "read"); });
+    toast((pods ? "Cleared " + list.length + " episode" : "Cleared " + list.length + " post") + (list.length === 1 ? "" : "s"), "Undo", () => {
+      list.forEach((i, n) => {
+        i.watched = before[n].watched;
+        if (i.read !== before[n].read) { i.read = before[n].read; i.readAt = Date.now(); Account.itemChanged(i, "read"); }
+        S.keep.add(i.key);
+      });
       saveItems(list);
       renderFeeds();
       renderList(true);
@@ -490,7 +508,7 @@
     const c = counts();
     $("count-all").textContent = c.all || "";
     $("count-starred").textContent = c.starred || "";
-    $("count-videos").textContent = c.videos || "";
+    $("count-groups").textContent = tabGroups().reduce((n, g) => n + (c.groups[g] || 0), 0) || "";
     $("count-podcasts").textContent = c.podcasts || "";
     for (const li of document.querySelectorAll(".feed")) li.querySelector(".count").textContent = c.feeds[li.dataset.id] || "";
     for (const b of document.querySelectorAll('.ghead .nav')) b.querySelector(".count").textContent = c.groups[b.dataset.view.slice(6)] || "";
@@ -589,11 +607,50 @@
     renderCounts();
   }
 
+  // The Groups tab: the groups you chose (all of them until you choose), and the one showing
+  function tabGroups() {
+    const all = groupNames();
+    const chosen = S.settings.tabGroups;
+    return Array.isArray(chosen) ? all.filter(g => chosen.includes(g)) : all;
+  }
+  function currentGroup() {
+    const list = tabGroups();
+    return list.includes(S.settings.groupSel) ? S.settings.groupSel : list[0] || "";
+  }
+
+  function openGroupsDialog() {
+    const box = $("groups-choices");
+    box.textContent = "";
+    const shown = new Set(tabGroups());
+    for (const g of groupNames()) {
+      const l = el("label", "check");
+      const c = el("input");
+      c.type = "checkbox"; c.value = g; c.checked = shown.has(g);
+      l.append(c, " " + g);
+      box.append(l);
+    }
+    $("groups-dialog").showModal();
+  }
+  $("groups-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const picked = [...$("groups-choices").querySelectorAll("input:checked")].map(c => c.value);
+    // All of them: keep following new groups automatically
+    if (picked.length === groupNames().length) delete S.settings.tabGroups; else S.settings.tabGroups = picked;
+    saveSettings();
+    $("groups-dialog").close();
+    renderCounts();
+    renderList();
+  });
+  $("groups-cancel").onclick = () => $("groups-dialog").close();
+
   function renameGroup(g) {
     const name = prompt("Rename the group “" + g + "”.\nLeave it empty to remove the group (its feeds stay, just ungrouped).", g);
     if (name == null) return;
     const to = name.trim();
     for (const f of groupFeeds(g)) f.group = to;
+    if (Array.isArray(S.settings.tabGroups)) S.settings.tabGroups = S.settings.tabGroups.map(x => x === g ? to : x).filter(Boolean);
+    if (S.settings.groupSel === g) S.settings.groupSel = to;
+    saveSettings();
     if (S.settings.collapsed && S.settings.collapsed[g]) { delete S.settings.collapsed[g]; if (to) S.settings.collapsed[to] = true; saveSettings(); }
     saveFeeds();
     if (S.view === "group:" + g) S.view = to ? "group:" + to : "all";
@@ -617,7 +674,7 @@
     if (S.view === "starred") list = list.filter(i => i.star);
     else if (S.view === "videos") list = list.filter(isVideo);
     else if (S.view.startsWith("feed:")) { const id = S.view.slice(5); list = list.filter(i => i.feedId === id); }
-    else if (S.view.startsWith("group:")) { const ids = new Set(groupFeeds(S.view.slice(6)).map(f => f.id)); list = list.filter(i => ids.has(i.feedId)); }
+    else if (S.view.startsWith("group:") || S.view === "groups") { const ids = new Set(groupFeeds(S.view === "groups" ? currentGroup() : S.view.slice(6)).map(f => f.id)); list = list.filter(i => ids.has(i.feedId)); }
     // Read posts leave the timeline at the next refresh or launch (until then they stay where they are)
     if (S.settings.unreadOnly && S.view !== "starred" && S.view !== "podcasts") list = list.filter(i => !i.read || S.keep.has(i.key) || i.key === S.current);
     if (S.query) {
@@ -641,14 +698,14 @@
     readObserver.disconnect();
     ul.textContent = "";
     renderTop();
-    $("view-title").textContent = S.view === "all" ? "Home" : S.view === "starred" ? "Starred" : S.view === "videos" ? "Videos" : S.view === "podcasts" ? "Podcasts" : S.view.startsWith("group:") ? S.view.slice(6) : (feedById(S.view.slice(5)) || {}).title || "Feed";
+    $("view-title").textContent = S.view === "all" ? "Home" : S.view === "starred" ? "Starred" : S.view === "groups" ? "Groups" : S.view === "podcasts" ? "Podcasts" : S.view.startsWith("group:") ? S.view.slice(6) : (feedById(S.view.slice(5)) || {}).title || "Feed";
     $("unread-btn").setAttribute("aria-pressed", S.settings.unreadOnly);
     $("unread-btn").title = S.settings.unreadOnly ? "Read posts hidden after a refresh: show them" : "Showing read posts: hide them";
     renderMore();
     const empty = $("empty");
     empty.hidden = S.shown.length > 0;
     if (!S.shown.length) {
-      empty.textContent = !S.feeds.length ? "" : S.query ? "No posts match “" + S.query + "”." : S.view.startsWith("group:") && !groupFeeds(S.view.slice(6)).length ? "This group is empty." : S.view === "podcasts" ? podEmpty() : S.view === "starred" ? "Star posts to keep them here." : S.view === "videos" ? "Videos from YouTube channels and video feeds show up here. Follow a YouTube channel with the + button (paste its youtube.com/@name address)." : S.settings.unreadOnly ? "You're all caught up." : "No posts yet.";
+      empty.textContent = !S.feeds.length ? "" : S.query ? "No posts match “" + S.query + "”." : S.view === "groups" && !groupNames().length ? "Put feeds into groups and they show up here: open a feed's Edit & filter and give it a Group." : S.view === "groups" && !tabGroups().length ? "No groups chosen for this tab. Tap ⚙ above to pick some." : S.view.startsWith("group:") && !groupFeeds(S.view.slice(6)).length ? "This group is empty." : S.view === "podcasts" ? podEmpty() : S.view === "starred" ? "Star posts to keep them here." : S.view === "videos" ? "Videos from YouTube channels and video feeds show up here. Follow a YouTube channel with the + button (paste its youtube.com/@name address)." : S.settings.unreadOnly ? "You're all caught up." : "No posts yet.";
       if (S.view === "podcasts" && !podFeeds().size) {
         const b = el("button", "btn primary", "Follow a channel as a podcast");
         b.onclick = openAddDialog;
@@ -659,7 +716,7 @@
         const again = el("div", "actions center");
         const showRead = el("button", "btn", "Show read posts");
         showRead.onclick = () => { S.settings.unreadOnly = false; saveSettings(); renderList(); };
-        const pullHint = el("p", "hint", "Pull down or press refresh to check for new posts.");
+        const pullHint = el("p", "hint", "Pull down to check for new posts.");
         again.append(showRead);
         empty.append(pullHint, again);
       }
@@ -699,10 +756,32 @@
       top.append(prof);
       return;
     }
+    if (S.view === "groups") {
+      const row = el("div", "gchips");
+      const cur = currentGroup();
+      for (const g of tabGroups()) {
+        const b = el("button", "gchip" + (g === cur ? " active" : ""), g);
+        b.type = "button";
+        if (c.groups[g]) b.append(el("b", null, String(c.groups[g])));
+        b.onclick = () => { S.settings.groupSel = g; saveSettings(); renderList(); $("timeline").scrollTop = 0; };
+        row.append(b);
+      }
+      if (groupNames().length) {
+        const gear = el("button", "gchip gear");
+        gear.type = "button";
+        gear.title = "Choose the groups shown here";
+        gear.setAttribute("aria-label", gear.title);
+        gear.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/></svg>';
+        gear.onclick = openGroupsDialog;
+        row.append(gear);
+      }
+      top.append(row);
+      if (!cur) return;
+    }
     if (S.view === "starred" || !S.feeds.length || S.query) return;
     const latest = {};
     for (const it of S.items.values()) if (!latest[it.feedId] || it.date > latest[it.feedId]) latest[it.feedId] = it.date;
-    const pool = S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.view === "podcasts" ? S.feeds.filter(f => f.podcast) : S.feeds.filter(f => !f.podcast);
+    const pool = S.view === "groups" ? groupFeeds(currentGroup()) : S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.view === "podcasts" ? S.feeds.filter(f => f.podcast) : S.feeds.filter(f => !f.podcast);
     const feeds = [...pool].sort((a, b) => (!!c.feeds[b.id] - !!c.feeds[a.id]) || ((latest[b.id] || 0) - (latest[a.id] || 0)));
     const row = el("div", "stories");
     const add = el("button", "story add");
@@ -1782,7 +1861,7 @@
   function openAddDialog() {
     closeDrawer();
     $("add-url").value = "";
-    $("add-group").value = S.view.startsWith("group:") ? S.view.slice(6) : "";
+    $("add-group").value = S.view.startsWith("group:") ? S.view.slice(6) : S.view === "groups" ? currentGroup() : "";
     $("add-podcast").checked = S.view === "podcasts";
     $("add-pod-row").hidden = S.view !== "podcasts";
     addState.input = "";
@@ -2074,11 +2153,10 @@
   $("menu-btn").onclick = openDrawer;
   $("scrim").onclick = closeDrawer;
   function refreshView() {
-    const feeds = S.view.startsWith("feed:") ? [feedById(S.view.slice(5))].filter(Boolean) : S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.view === "podcasts" ? S.feeds.filter(f => f.podcast) : S.feeds;
+    const feeds = S.view.startsWith("feed:") ? [feedById(S.view.slice(5))].filter(Boolean) : S.view === "groups" ? groupFeeds(currentGroup()) : S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.view === "podcasts" ? S.feeds.filter(f => f.podcast) : S.feeds;
     if (!feeds.length) { endPull(); return openAddDialog(); }
     refresh(feeds);
   }
-  $("refresh-btn").onclick = refreshView;
 
   // ---------- Pull to refresh (touch: pull down at the top; mouse / trackpad: keep scrolling up at the top) ----------
   const PULL_AT = 64;
@@ -2136,7 +2214,7 @@
 
   function applyScrollRead() { $("scrollread-btn").textContent = "Read on scroll: " + (S.settings.markOnScroll ? "On" : "Off"); }
   $("scrollread-btn").onclick = () => { S.settings.markOnScroll = !S.settings.markOnScroll; saveSettings(); applyScrollRead(); };
-  $("markall-btn").onclick = markAllRead;
+  $("clear-btn").onclick = markAllRead;
   $("unread-btn").onclick = () => { S.settings.unreadOnly = !S.settings.unreadOnly; saveSettings(); renderList(); };
   $("back-btn").onclick = () => { if (history.state && history.state.article) history.back(); else closeArticle(); };
   $("star-btn").onclick = () => { const it = S.items.get(S.current); if (it) setStar(it, !it.star); };
@@ -2181,7 +2259,7 @@
       case "s": if (it) setStar(it, !it.star); break;
       case "m": if (it) setRead(it, !it.read); break;
       case "o": case "v": if (it && it.link) window.open(it.link, "_blank", "noopener"); break;
-      case "r": $("refresh-btn").click(); break;
+      case "r": refreshView(); break;
       case "a": openAddDialog(); e.preventDefault(); break;
       case "/": showSearch(true); e.preventDefault(); break;
       case "Escape": if (document.body.classList.contains("drawer")) closeDrawer(); else if (document.body.classList.contains("reading")) $("back-btn").click(); break;

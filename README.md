@@ -16,6 +16,14 @@ actions), a row of the feeds you follow at the top (ringed when they have unread
 Tapping a post opens it over the timeline; back returns to the same place. Videos and podcast episodes play right in
 the timeline. On phones there's a bottom tab bar (Home, Videos, follow +, Starred, Following).
 
+### Top bar and tabs
+
+- The **✓✓ button** marks everything in the current view as read and clears it from the timeline (in Podcasts:
+  marks the episodes played), with Undo. Refreshing is pull-down (or keep scrolling up at the top; `r` on a
+  keyboard).
+- The **Groups** tab (instead of Videos) shows one group's timeline at a time, with chips at the top to switch
+  groups; ⚙ chooses which groups appear there (all of them until you choose). The choice syncs with the account.
+
 ### Reading flow
 
 - **Read on scroll:** a post you've seen and scrolled past counts as read (switch: "Read on scroll" at the bottom of

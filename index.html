@@ -32,7 +32,7 @@
     </button>
     <nav class="views">
       <button class="nav" data-view="all"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg><span>Home</span><b class="count" id="count-all"></b></button>
-      <button class="nav" data-view="videos"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/></svg><span>Videos</span><b class="count" id="count-videos"></b></button>
+      <button class="nav" data-view="groups"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>Groups</span><b class="count" id="count-groups"></b></button>
       <button class="nav" data-view="podcasts"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4.5" height="6.5" rx="1.8"/><rect x="16" y="14" width="4.5" height="6.5" rx="1.8"/></svg><span>Podcasts</span><b class="count" id="count-podcasts"></b></button>
       <button class="nav" data-view="starred"><svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg><span>Starred</span><b class="count" id="count-starred"></b></button>
     </nav>
@@ -59,8 +59,7 @@
         <h1 id="view-title">Home</h1>
         <button class="icon" id="search-btn" title="Search (/)" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
         <button class="icon" id="unread-btn" title="Show unread only" aria-label="Show unread only" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5"/></svg></button>
-        <button class="icon" id="markall-btn" title="Mark all as read" aria-label="Mark all as read"><svg viewBox="0 0 24 24"><path d="m3 13 4 4L17 7M10 16l1 1L21 7"/></svg></button>
-        <button class="icon" id="refresh-btn" title="Refresh (r)" aria-label="Refresh"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
+        <button class="icon" id="clear-btn" title="Mark everything here as read and hide it" aria-label="Mark everything here as read and hide it"><svg viewBox="0 0 24 24"><path d="m3 13 4 4L17 7M10 16l1 1L21 7"/></svg></button>
       </header>
       <div class="ptr" id="ptr" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></div>
       <button class="newpill" id="newpill" hidden></button>
@@ -89,7 +88,7 @@
 
   <nav class="tabs" id="tabs" aria-label="Sections">
     <button data-view="all"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
-    <button data-view="videos"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/></svg><span>Videos</span></button>
+    <button data-view="groups"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>Groups</span></button>
     <button class="fab" id="tab-add" aria-label="Follow a feed"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
     <button data-view="podcasts"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4.5" height="6.5" rx="1.8"/><rect x="16" y="14" width="4.5" height="6.5" rx="1.8"/></svg><span>Podcasts</span></button>
     <button id="tab-feeds"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5c.8-3.3 3.4-5 6.5-5s5.7 1.7 6.5 5"/><path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6M18 14.8c1.8.7 3 2.3 3.5 4.7"/></svg><span>Following</span></button>
@@ -147,6 +146,18 @@
     <button type="button" class="icon acc-x" id="acc-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     <div id="acc-body"></div>
     <p class="error" id="acc-error" role="alert" hidden></p>
+  </form>
+</dialog>
+
+<dialog id="groups-dialog">
+  <form method="dialog" id="groups-form">
+    <h2>Groups tab</h2>
+    <p>Choose which groups appear in the Groups tab.</p>
+    <div id="groups-choices" class="choices"></div>
+    <div class="actions">
+      <button type="button" class="btn" id="groups-cancel">Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
   </form>
 </dialog>
 
