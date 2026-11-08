@@ -508,3 +508,152 @@ a.pname:hover { text-decoration: underline; }
 
 /* Hold-press for the account menu: no text selection or link callout */
 [data-xh] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+
+/* ======================================================================================================
+   Glass theme: frosted panels floating over a soft colour field (the logo's blue → violet).
+   Bars, the sidebar, dialogs and the player blur what's behind them; posts are translucent cards (the
+   colour field behind them is smooth, so they need no blur of their own: cheaper on phones).
+   ====================================================================================================== */
+:root {
+  --bg: #eef0fa;
+  --page: radial-gradient(1100px 760px at -5% -10%, #c7d2fe 0, transparent 62%),
+          radial-gradient(900px 700px at 105% 0%, #f5d0fe 0, transparent 58%),
+          radial-gradient(1000px 820px at 55% 110%, #bae6fd 0, transparent 62%), #eef0fa;
+  --card: rgba(255, 255, 255, .62);
+  --glass: rgba(255, 255, 255, .55);
+  --glass-strong: rgba(255, 255, 255, .82);
+  --side: rgba(255, 255, 255, .5);
+  --text: #16152b;
+  --muted: #5b5d78;
+  --faint: #979ab4;
+  --line: rgba(70, 70, 140, .13);
+  --hover: rgba(255, 255, 255, .62);
+  --active: rgba(255, 255, 255, .92);
+  --accent: #5b4ff0;
+  --accent-2: #3b82f6;
+  --accent-soft: rgba(91, 79, 240, .14);
+  --on-accent: #fff;
+  --rim: rgba(255, 255, 255, .75);
+  --blur: blur(22px) saturate(170%);
+  --shadow: 0 18px 50px rgba(40, 40, 110, .2);
+  --card-shadow: 0 6px 22px rgba(40, 40, 110, .07);
+  --grad: linear-gradient(135deg, var(--accent-2), var(--accent) 55%, #7c3aed);
+  --sans: "Plus Jakarta Sans", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0a16;
+    --page: radial-gradient(1100px 760px at -5% -10%, rgba(67, 56, 202, .55) 0, transparent 62%),
+            radial-gradient(900px 700px at 105% 0%, rgba(126, 34, 206, .42) 0, transparent 58%),
+            radial-gradient(1000px 820px at 55% 110%, rgba(3, 105, 161, .42) 0, transparent 62%), #0a0a16;
+    --card: rgba(255, 255, 255, .06); --glass: rgba(20, 20, 38, .5); --glass-strong: rgba(26, 26, 48, .86); --side: rgba(255, 255, 255, .045);
+    --text: #ecebff; --muted: #a4a4c4; --faint: #6f6f90; --line: rgba(255, 255, 255, .09); --hover: rgba(255, 255, 255, .07); --active: rgba(255, 255, 255, .13);
+    --accent: #8b80ff; --accent-2: #60a5fa; --accent-soft: rgba(139, 128, 255, .2); --on-accent: #fff; --rim: rgba(255, 255, 255, .08);
+    --shadow: 0 18px 50px rgba(0, 0, 0, .55); --card-shadow: none; --star: #fbbf24; --danger: #fb7185;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0a16;
+  --page: radial-gradient(1100px 760px at -5% -10%, rgba(67, 56, 202, .55) 0, transparent 62%),
+          radial-gradient(900px 700px at 105% 0%, rgba(126, 34, 206, .42) 0, transparent 58%),
+          radial-gradient(1000px 820px at 55% 110%, rgba(3, 105, 161, .42) 0, transparent 62%), #0a0a16;
+  --card: rgba(255, 255, 255, .06); --glass: rgba(20, 20, 38, .5); --glass-strong: rgba(26, 26, 48, .86); --side: rgba(255, 255, 255, .045);
+  --text: #ecebff; --muted: #a4a4c4; --faint: #6f6f90; --line: rgba(255, 255, 255, .09); --hover: rgba(255, 255, 255, .07); --active: rgba(255, 255, 255, .13);
+  --accent: #8b80ff; --accent-2: #60a5fa; --accent-soft: rgba(139, 128, 255, .2); --on-accent: #fff; --rim: rgba(255, 255, 255, .08);
+  --shadow: 0 18px 50px rgba(0, 0, 0, .55); --card-shadow: none; --star: #fbbf24; --danger: #fb7185;
+}
+
+body { background: var(--page); background-attachment: fixed; }
+
+/* Desktop: the sidebar floats as a glass panel */
+@media (min-width: 1100px) { .app { grid-template-columns: 284px 1fr; } }
+.side { margin: 12px 0 12px 12px; border-radius: 26px; background: var(--side); border: 1px solid var(--rim);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); box-shadow: var(--card-shadow); }
+.brand { font-size: 20px; letter-spacing: -.03em; }
+.brand img { border-radius: 10px; box-shadow: 0 6px 16px rgba(91, 79, 240, .35); }
+.nav { border-radius: 14px; transition: background .15s; }
+.nav.active { background: var(--active); box-shadow: inset 0 0 0 1px var(--rim), var(--card-shadow); }
+.nav.active svg { color: var(--accent); }
+.views .count:not(:empty) { background: var(--grad); }
+.feed .nav, .ghead .nav { border-radius: 12px; }
+.sidefoot { border-top-color: var(--line); }
+.account { background: var(--card); border-color: var(--rim); border-radius: 18px; }
+
+/* Bars: frosted, no hard line */
+.bar { background: var(--glass); border-bottom: 1px solid var(--line); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.bar h1 { font-size: 22px; letter-spacing: -.035em; }
+.icon:hover, .pact:hover { background: var(--hover); }
+
+/* Buttons */
+.btn { background: var(--card); border-color: var(--line); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.btn.primary { background: var(--grad); border-color: transparent; box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+.btn.danger-fill { background: var(--danger); box-shadow: none; }
+
+/* Posts: glass cards */
+.items { gap: 14px; margin-top: 10px; }
+.post { background: var(--card); border: 1px solid var(--rim); border-radius: 22px; box-shadow: var(--card-shadow); padding: 15px 17px 6px; transition: transform .15s, box-shadow .15s, background .15s; }
+.post:hover { border-color: var(--rim); background: color-mix(in srgb, var(--card) 70%, var(--active)); }
+.post.unread .udot { background: var(--grad); box-shadow: 0 0 0 4px var(--accent-soft); }
+.pname { letter-spacing: -.01em; }
+.ptitle { letter-spacing: -.02em; }
+.pmedia, .pgallery { border-radius: 16px; border-color: var(--line); }
+.pmedia .play { background: rgba(255, 255, 255, .22); border: 1px solid rgba(255, 255, 255, .45); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.pmedia.playable:hover .play { background: var(--accent); }
+.pmedia.audio { background: var(--accent-soft); }
+.pmedia.audio .play, .podplay, .pb-play { background: var(--grad); }
+.quote { background: var(--hover); border-color: var(--line); border-radius: 16px; }
+
+/* Follows row, chips, search */
+.story .ring { background: var(--line); }
+.story.new .ring { background: conic-gradient(from 210deg, var(--accent-2), var(--accent), #d946ef, var(--accent-2)); }
+.story .ring .av { border-color: var(--glass-strong); }
+.story.add .ring { background: var(--card); border-color: var(--accent); color: var(--accent); }
+.gchip { background: var(--card); border-color: var(--rim); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.gchip.active { background: var(--grad); border-color: transparent; color: #fff; }
+.gchip.active b { color: #fff; }
+.search input { background: var(--card); border-color: var(--rim); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.status { background: var(--card); border: 1px solid var(--rim); }
+
+/* The open post: over the same colour field */
+.reader { background: var(--page); background-attachment: fixed; }
+.content pre, .content code { background: var(--hover); }
+
+/* Dialogs, toast, pills: frosted */
+dialog { background: var(--glass-strong); border: 1px solid var(--rim); border-radius: 26px; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+dialog::backdrop { background: rgba(15, 12, 40, .35); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+dialog input[type="text"], #ask-input, #acc-body input, .result { background: var(--hover); border-color: var(--line); }
+.filters { border-color: var(--line); }
+.toast { background: var(--glass-strong); color: var(--text); border: 1px solid var(--rim); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+.toast button { color: var(--accent); filter: none; }
+.newpill { background: var(--grad); }
+.ptr { background: var(--glass-strong); border-color: var(--rim); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+
+/* Player bar: a floating glass panel */
+.podbar { left: 308px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom)); border-radius: 22px; padding: 10px 16px;
+  background: var(--glass-strong); border: 1px solid var(--rim); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); box-shadow: var(--shadow); }
+.podprog i, .pmedia .progress i { background: var(--grad); }
+
+@media (max-width: 1099px) {
+  .side { position: fixed; inset: 10px auto 10px 10px; margin: 0; width: min(300px, 82vw); transform: translateX(calc(-100% - 20px));
+    padding-top: calc(16px + env(safe-area-inset-top)); background: var(--glass-strong); box-shadow: var(--shadow); }
+  .scrim { background: rgba(15, 12, 40, .3); }
+  .podbar { left: 12px; }
+}
+
+/* Phone: floating glass tab bar, posts as cards with breathing room */
+@media (max-width: 759px) {
+  .tabs { left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); padding: 6px 6px; border-radius: 28px;
+    background: var(--glass-strong); border: 1px solid var(--rim); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); box-shadow: var(--shadow); }
+  .tabs button { border-radius: 20px; padding: 6px 0; min-width: 56px; }
+  .tabs button.active { color: var(--accent); }
+  .tabs .fab { background: var(--grad); width: 48px; height: 48px; box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 45%, transparent); }
+  .timeline { padding: 0 0 calc(96px + env(safe-area-inset-bottom)); }
+  .items { gap: 10px; margin: 6px 10px 0; border-top: 0; }
+  .post { border-radius: 20px; border: 1px solid var(--rim); box-shadow: var(--card-shadow); padding: 13px 14px 4px; }
+  .post:hover { border-color: var(--rim); }
+  .toast { bottom: calc(92px + env(safe-area-inset-bottom)); }
+  .podbar { left: 10px; right: 10px; bottom: calc(80px + env(safe-area-inset-bottom)); border-radius: 22px; padding: 8px 10px; }
+  body.podding .timeline { padding-bottom: calc(230px + env(safe-area-inset-bottom)); }
+  body.podding .toast { bottom: calc(222px + env(safe-area-inset-bottom)); }
+  .article.has-video .player:not(.short):not(.audio) { margin: 0 -18px 18px; }
+}

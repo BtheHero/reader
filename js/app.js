@@ -2304,7 +2304,7 @@
     else document.documentElement.dataset.theme = t;
     $("theme-btn").textContent = "Theme: " + t.charAt(0).toUpperCase() + t.slice(1);
     const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-    for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = dark ? "#16171a" : "#f6f4ef";
+    for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = dark ? "#0a0a16" : "#eef0fa";
   }
   $("theme-btn").onclick = () => {
     S.settings.theme = THEMES[(THEMES.indexOf(S.settings.theme) + 1) % THEMES.length];

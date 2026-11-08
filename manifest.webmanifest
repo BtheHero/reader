@@ -7,7 +7,7 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f6f4ef",
+  "background_color": "#eef0fa",
   "theme_color": "#5b4ff0",
   "categories": ["news", "productivity"],
   "icons": [
