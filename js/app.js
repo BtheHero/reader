@@ -451,6 +451,7 @@
     const hide = hider();
     const groupOf = new Map(S.feeds.map(f => [f.id, f.group || ""]));
     const pods = podFeeds();
+    const homeHidden = groupOnlyFeeds();
     for (const it of S.items.values()) {
       if (hide(it)) { c.hidden[it.feedId] = (c.hidden[it.feedId] || 0) + 1; continue; }
       if (it.star) c.starred++;
@@ -461,7 +462,7 @@
       }
       if (!it.read && isVideo(it)) c.videos++;
       if (!it.read) {
-        c.all++;
+        if (!homeHidden.has(it.feedId)) c.all++;
         c.feeds[it.feedId] = (c.feeds[it.feedId] || 0) + 1;
         const g = groupOf.get(it.feedId);
         if (g) c.groups[g] = (c.groups[g] || 0) + 1;
@@ -681,6 +682,8 @@
     if (S.view === "podcasts") list = list.filter(i => pods.has(i.feedId) && isEpisode(i, pods.get(i.feedId)) && (!S.settings.unreadOnly || !i.watched || S.keep.has(i.key) || (Pod.item && Pod.item.key === i.key)));
     // Podcast channels' videos live in Podcasts (and on the channel's own page), not in the timelines
     else if (S.view !== "starred" && !S.view.startsWith("feed:")) list = list.filter(i => !pods.has(i.feedId));
+    // Feeds set to "only in its group" stay off Home
+    if (S.view === "all") { const only = groupOnlyFeeds(); list = list.filter(i => !only.has(i.feedId)); }
     if (S.view === "starred") list = list.filter(i => i.star);
     else if (S.view === "videos") list = list.filter(isVideo);
     else if (S.view.startsWith("feed:")) { const id = S.view.slice(5); list = list.filter(i => i.feedId === id); }
@@ -695,6 +698,7 @@
   }
 
   const isVideo = (it) => !!it.video && !it.video.audio;
+  const groupOnlyFeeds = () => new Set(S.feeds.filter(f => f.groupOnly && f.group).map(f => f.id));
   const podFeeds = () => new Map(S.feeds.filter(f => f.podcast).map(f => [f.id, f]));
   // A podcast channel's video long enough to be an episode (lengths come from the YouTube API)
   const isEpisode = (it, f) => !!it.video && it.video.kind === "youtube" && !it.ytLive && it.ytDur >= (f.podMin || 60) * 60;
@@ -791,7 +795,7 @@
     if (S.view === "starred" || !S.feeds.length || S.query) return;
     const latest = {};
     for (const it of S.items.values()) if (!latest[it.feedId] || it.date > latest[it.feedId]) latest[it.feedId] = it.date;
-    const pool = S.view === "groups" ? groupFeeds(currentGroup()) : S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.view === "podcasts" ? S.feeds.filter(f => f.podcast) : S.feeds.filter(f => !f.podcast);
+    const pool = S.view === "groups" ? groupFeeds(currentGroup()) : S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.view === "podcasts" ? S.feeds.filter(f => f.podcast) : S.feeds.filter(f => !f.podcast && !(f.groupOnly && f.group));
     const feeds = [...pool].sort((a, b) => (!!c.feeds[b.id] - !!c.feeds[a.id]) || ((latest[b.id] || 0) - (latest[a.id] || 0)));
     const row = el("div", "stories");
     const add = el("button", "story add");
@@ -1995,6 +1999,8 @@
     $("feed-name").value = f.title;
     $("feed-url").value = f.url;
     $("feed-group").value = f.group || "";
+    $("feed-grouponly").checked = !!f.groupOnly;
+    $("feed-grouponly-row").hidden = !f.group;
     const r = f.filters || {};
     $("flt-mute").value = r.mute || "";
     $("flt-only").value = r.only || "";
@@ -2016,6 +2022,7 @@
     if (name && name !== editing.title) { editing.title = name; editing.customTitle = true; }
     editing.group = $("feed-group").value.trim().replace(/\s+/g, " ");
     if (!editing.group) delete editing.group;
+    if (editing.group && $("feed-grouponly").checked) editing.groupOnly = true; else delete editing.groupOnly;
     const filters = { mute: $("flt-mute").value.trim(), only: $("flt-only").value.trim(), mediaOnly: $("flt-media").checked,
       noReposts: !!editing.x && $("flt-reposts").checked, noReplies: !!editing.x && $("flt-replies").checked };
     if (hasFilters({ filters })) editing.filters = filters; else delete editing.filters;
@@ -2032,6 +2039,8 @@
     $("feed-dialog").close();
   });
   $("feed-cancel").onclick = () => $("feed-dialog").close();
+  // "Only show in its group" makes sense once the feed has a group
+  $("feed-group").addEventListener("input", () => { $("feed-grouponly-row").hidden = !$("feed-group").value.trim(); });
   $("feed-delete").onclick = async () => {
     if (!editing) return;
     const f = editing;

@@ -2,7 +2,7 @@
 // (saved articles are in IndexedDB). Feed fetches ("fetch" next to the page) always go to the network.
 // Paths are relative to where Reader is served (its own site's root, or /reader/ on another site).
 // Bump VERSION whenever any file below changes, so devices pick up the new copy.
-const VERSION = "reader-v27";
+const VERSION = "reader-v28";
 const SHELL = ["./", "index.html", "style.css", "js/parse.js", "js/store.js", "js/app.js", "js/account.js", "js/config.js", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
