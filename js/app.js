@@ -132,6 +132,7 @@
       const it = { key, feedId: feed.id, id: p.id, title: p.title, link: p.link, date, author: p.author, html: p.html, image: p.image, video: p.video || null,
         read: old ? old.read : false, readAt: old ? old.readAt || 0 : 0, star: old ? old.star : false, seen: old ? old.seen : now,
         pos: old ? old.pos || 0 : 0, dur: old ? old.dur || 0 : 0, watched: old ? !!old.watched : false };
+      if (old && old.ytDur != null) { it.ytDur = old.ytDur; it.ytLive = old.ytLive; }
       if (!old) added++;
       if (!old || old.title !== it.title || old.html !== it.html || old.date !== it.date || old.image !== it.image || JSON.stringify(old.video || null) !== JSON.stringify(it.video)) {
         S.items.set(key, it); changed.push(it);
@@ -195,6 +196,7 @@
       S.refreshing = false;
       $("refresh-btn").classList.remove("spin");
       endPull();
+      podDurations();
       renderFeeds();
       if (!quiet) { S.keep.clear(); hideNewPill(); renderList(); }
       else if ($("timeline").scrollTop > 80 && !document.body.classList.contains("reading")) { if (added) showNewPill(added); }
@@ -349,6 +351,7 @@
     if (existing) { selectView("feed:" + existing.id); throw new Error("You're already subscribed to " + existing.title + "."); }
     const feed = { id: uid(), url, title: parsed.title || host(parsed.siteUrl || url), siteUrl: parsed.siteUrl, added: Date.now(), lastFetch: Date.now(), error: "" };
     if (x) feed.x = x;
+    if ($("add-podcast").checked && (YT_FEED.test(url) || parsed.items.some(i => i.video && i.video.kind === "youtube"))) { feed.podcast = true; feed.podMin = 60; }
     const group = $("add-group").value.trim().replace(/\s+/g, " ");
     if (group) feed.group = group;
     if (parsed.icon) feed.icon = parsed.icon;
@@ -357,7 +360,8 @@
     merge(feed, parsed);
     await saveFeeds();
     renderFeeds();
-    selectView("feed:" + feed.id);
+    if (feed.podcast) { selectView("podcasts"); podDurations(); }
+    else selectView("feed:" + feed.id);
     toast("Subscribed to " + feed.title);
   }
 
@@ -421,12 +425,18 @@
   // ---------- Rendering ----------
 
   function counts() {
-    const c = { all: 0, videos: 0, starred: 0, feeds: {}, groups: {}, hidden: {} };
+    const c = { all: 0, videos: 0, podcasts: 0, starred: 0, feeds: {}, groups: {}, hidden: {} };
     const hide = hider();
     const groupOf = new Map(S.feeds.map(f => [f.id, f.group || ""]));
+    const pods = podFeeds();
     for (const it of S.items.values()) {
       if (hide(it)) { c.hidden[it.feedId] = (c.hidden[it.feedId] || 0) + 1; continue; }
       if (it.star) c.starred++;
+      const pf = pods.get(it.feedId);
+      if (pf) {
+        if (isEpisode(it, pf) && !it.read && !it.watched) { c.podcasts++; c.feeds[it.feedId] = (c.feeds[it.feedId] || 0) + 1; }
+        continue;
+      }
       if (!it.read && isVideo(it)) c.videos++;
       if (!it.read) {
         c.all++;
@@ -481,6 +491,7 @@
     $("count-all").textContent = c.all || "";
     $("count-starred").textContent = c.starred || "";
     $("count-videos").textContent = c.videos || "";
+    $("count-podcasts").textContent = c.podcasts || "";
     for (const li of document.querySelectorAll(".feed")) li.querySelector(".count").textContent = c.feeds[li.dataset.id] || "";
     for (const b of document.querySelectorAll('.ghead .nav')) b.querySelector(".count").textContent = c.groups[b.dataset.view.slice(6)] || "";
     for (const b of document.querySelectorAll(".story[data-view]")) b.classList.toggle("new", !!c.feeds[b.dataset.view.slice(5)]);
@@ -599,12 +610,16 @@
   function viewItems() {
     const hide = hider();
     let list = [...S.items.values()].filter(i => !hide(i));
+    const pods = podFeeds();
+    if (S.view === "podcasts") list = list.filter(i => pods.has(i.feedId) && isEpisode(i, pods.get(i.feedId)) && (!S.settings.unreadOnly || !i.watched || S.keep.has(i.key) || (Pod.item && Pod.item.key === i.key)));
+    // Podcast channels' videos live in Podcasts (and on the channel's own page), not in the timelines
+    else if (S.view !== "starred" && !S.view.startsWith("feed:")) list = list.filter(i => !pods.has(i.feedId));
     if (S.view === "starred") list = list.filter(i => i.star);
     else if (S.view === "videos") list = list.filter(isVideo);
     else if (S.view.startsWith("feed:")) { const id = S.view.slice(5); list = list.filter(i => i.feedId === id); }
     else if (S.view.startsWith("group:")) { const ids = new Set(groupFeeds(S.view.slice(6)).map(f => f.id)); list = list.filter(i => ids.has(i.feedId)); }
     // Read posts leave the timeline at the next refresh or launch (until then they stay where they are)
-    if (S.settings.unreadOnly && S.view !== "starred") list = list.filter(i => !i.read || S.keep.has(i.key) || i.key === S.current);
+    if (S.settings.unreadOnly && S.view !== "starred" && S.view !== "podcasts") list = list.filter(i => !i.read || S.keep.has(i.key) || i.key === S.current);
     if (S.query) {
       const q = S.query.toLowerCase();
       list = list.filter(i => i.title.toLowerCase().includes(q) || Parse.plain(i.html).toLowerCase().includes(q) || (i.author || "").toLowerCase().includes(q));
@@ -613,6 +628,9 @@
   }
 
   const isVideo = (it) => !!it.video && !it.video.audio;
+  const podFeeds = () => new Map(S.feeds.filter(f => f.podcast).map(f => [f.id, f]));
+  // A podcast channel's video long enough to be an episode (lengths come from the YouTube API)
+  const isEpisode = (it, f) => !!it.video && it.video.kind === "youtube" && !it.ytLive && it.ytDur >= (f.podMin || 60) * 60;
   const hiddenShort = (it) => S.settings.hideShorts && it.video && it.video.short;
 
   function renderList(keepScroll) {
@@ -623,15 +641,21 @@
     readObserver.disconnect();
     ul.textContent = "";
     renderTop();
-    $("view-title").textContent = S.view === "all" ? "Home" : S.view === "starred" ? "Starred" : S.view === "videos" ? "Videos" : S.view.startsWith("group:") ? S.view.slice(6) : (feedById(S.view.slice(5)) || {}).title || "Feed";
+    $("view-title").textContent = S.view === "all" ? "Home" : S.view === "starred" ? "Starred" : S.view === "videos" ? "Videos" : S.view === "podcasts" ? "Podcasts" : S.view.startsWith("group:") ? S.view.slice(6) : (feedById(S.view.slice(5)) || {}).title || "Feed";
     $("unread-btn").setAttribute("aria-pressed", S.settings.unreadOnly);
     $("unread-btn").title = S.settings.unreadOnly ? "Read posts hidden after a refresh: show them" : "Showing read posts: hide them";
     renderMore();
     const empty = $("empty");
     empty.hidden = S.shown.length > 0;
     if (!S.shown.length) {
-      empty.textContent = !S.feeds.length ? "" : S.query ? "No posts match “" + S.query + "”." : S.view.startsWith("group:") && !groupFeeds(S.view.slice(6)).length ? "This group is empty." : S.view === "starred" ? "Star posts to keep them here." : S.view === "videos" ? "Videos from YouTube channels and video feeds show up here. Follow a YouTube channel with the + button (paste its youtube.com/@name address)." : S.settings.unreadOnly ? "You're all caught up." : "No posts yet.";
-      if (S.feeds.length && S.settings.unreadOnly && !S.query && S.view !== "starred") {
+      empty.textContent = !S.feeds.length ? "" : S.query ? "No posts match “" + S.query + "”." : S.view.startsWith("group:") && !groupFeeds(S.view.slice(6)).length ? "This group is empty." : S.view === "podcasts" ? podEmpty() : S.view === "starred" ? "Star posts to keep them here." : S.view === "videos" ? "Videos from YouTube channels and video feeds show up here. Follow a YouTube channel with the + button (paste its youtube.com/@name address)." : S.settings.unreadOnly ? "You're all caught up." : "No posts yet.";
+      if (S.view === "podcasts" && !podFeeds().size) {
+        const b = el("button", "btn primary", "Follow a channel as a podcast");
+        b.onclick = openAddDialog;
+        const row = el("div", "actions center");
+        row.append(b);
+        empty.append(row);
+      } else if (S.feeds.length && S.settings.unreadOnly && !S.query && S.view !== "starred") {
         const again = el("div", "actions center");
         const showRead = el("button", "btn", "Show read posts");
         showRead.onclick = () => { S.settings.unreadOnly = false; saveSettings(); renderList(); };
@@ -678,7 +702,7 @@
     if (S.view === "starred" || !S.feeds.length || S.query) return;
     const latest = {};
     for (const it of S.items.values()) if (!latest[it.feedId] || it.date > latest[it.feedId]) latest[it.feedId] = it.date;
-    const pool = S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.feeds;
+    const pool = S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.view === "podcasts" ? S.feeds.filter(f => f.podcast) : S.feeds.filter(f => !f.podcast);
     const feeds = [...pool].sort((a, b) => (!!c.feeds[b.id] - !!c.feeds[a.id]) || ((latest[b.id] || 0) - (latest[a.id] || 0)));
     const row = el("div", "stories");
     const add = el("button", "story add");
@@ -703,7 +727,7 @@
     if (old) old.remove();
     const frag = document.createDocumentFragment();
     const end = Math.min(S.shown.length, S.rendered + PAGE);
-    for (let i = S.rendered; i < end; i++) { const li = itemRow(S.items.get(S.shown[i])); readObserver.observe(li); frag.append(li); }
+    for (let i = S.rendered; i < end; i++) { const it = S.items.get(S.shown[i]); const li = S.view === "podcasts" ? podRow(it) : itemRow(it); if (S.view !== "podcasts") readObserver.observe(li); frag.append(li); }
     S.rendered = end;
     if (end < S.shown.length) {
       const s = el("li", "sentinel");
@@ -1011,8 +1035,17 @@
     const art = $("article");
     stopPlayer();
     art.textContent = "";
-    art.classList.toggle("has-video", !!it.video && !it.video.audio);
-    if (it.video) art.append(playerFor(it));
+    const pf = feedById(it.feedId);
+    const episode = pf && pf.podcast && isEpisode(it, pf);
+    art.classList.toggle("has-video", !!it.video && !it.video.audio && !episode);
+    if (episode) {
+      const box = el("div", "podhead");
+      const img = el("img", "podbig"); img.src = it.image || ""; img.alt = ""; img.referrerPolicy = "no-referrer";
+      const play = el("button", "btn primary podgo", Pod.item && Pod.item.key === it.key ? (Pod.playing ? "❚❚ Pause" : "▶ Resume") : it.pos > 5 && !it.watched ? "▶ Resume (" + length(Math.max(0, it.ytDur - it.pos)) + " left)" : "▶ Play episode · " + length(it.ytDur));
+      play.onclick = () => { podPlay(it); setTimeout(() => { play.textContent = Pod.playing ? "❚❚ Pause" : "▶ Resume"; }, 600); };
+      box.append(img, play);
+      art.append(box);
+    } else if (it.video) art.append(playerFor(it));
     const head = el("header");
     const src = el("a", "src");
     src.append(avatar(f), el("span", null, f.title));
@@ -1389,13 +1422,297 @@
   }
   $("article").addEventListener("click", (e) => {
     const b = e.target.closest(".ts");
-    if (b) return seek(+b.dataset.t);
+    if (b) {
+      const it = S.items.get(S.current), pf = it && feedById(it.feedId);
+      if (it && pf && pf.podcast && isEpisode(it, pf)) return podPlay(it, +b.dataset.t);
+      return seek(+b.dataset.t);
+    }
     if (e.target.tagName === "IMG" && e.target.closest(".content")) {
       e.preventDefault();
       const all = [...$("article").querySelectorAll(".content img")];
       openLightbox(all.map(i => i.currentSrc || i.src), all.indexOf(e.target));
     }
   });
+
+  // ---------- Podcasts ----------
+  // YouTube channels followed as podcasts: their videos over the channel's minimum length (an hour by default)
+  // are episodes, listed in Podcasts and played in the player bar. With your own Invidious server (YouTube
+  // fallback setting) episodes play as audio only (keeps going with the screen off, lock-screen controls);
+  // otherwise YouTube's own player plays them in a small window in the bar.
+
+  const isoSecs = (d) => { const m = /P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(d || "") || []; return (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0); };
+  const hms = (s) => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0"); };
+  const length = (s) => { const h = Math.floor(s / 3600), m = Math.round(s % 3600 / 60); return h ? h + " h" + (m ? " " + m + " min" : "") : m + " min"; };
+  let podProblem = "";
+
+  function podEmpty() {
+    if (!podFeeds().size) return "Follow a YouTube channel as a podcast: its videos over an hour show up here, ready to play like a podcast.";
+    if (!S.settings.ytKey) return "Podcasts need your YouTube API key (bottom of the menu) to tell which videos are long enough.";
+    if (podProblem) return "Couldn't get video lengths from YouTube: " + podProblem;
+    return S.settings.unreadOnly ? "No new episodes. Pull down or press refresh to check." : "No episodes over the minimum length yet.";
+  }
+
+  // Video lengths for podcast channels, from the YouTube Data API (1 quota unit per 50 videos)
+  let podBusy = false;
+  async function podDurations() {
+    if (podBusy || !S.settings.ytKey) return;
+    const pods = podFeeds();
+    const need = [...S.items.values()].filter(i => pods.has(i.feedId) && i.video && i.video.kind === "youtube" && i.ytDur == null);
+    if (!need.length) return;
+    podBusy = true;
+    try {
+      for (let k = 0; k < need.length; k += 50) {
+        const chunk = need.slice(k, k + 50);
+        const d = await fetch("https://www.googleapis.com/youtube/v3/videos?" + new URLSearchParams({ part: "contentDetails,snippet", id: chunk.map(i => i.video.id).join(","), fields: "items(id,contentDetails/duration,snippet/liveBroadcastContent)" }),
+          { headers: { "X-Goog-Api-Key": S.settings.ytKey } }).then(r => r.json());
+        if (d.error) { podProblem = (d.error.message || "error").replace(/<[^>]*>/g, ""); break; }
+        podProblem = "";
+        const got = new Map((d.items || []).map(v => [v.id, v]));
+        for (const it of chunk) {
+          const v = got.get(it.video.id);
+          it.ytDur = v ? isoSecs(v.contentDetails && v.contentDetails.duration) : 0;
+          it.ytLive = !!(v && v.snippet && v.snippet.liveBroadcastContent && v.snippet.liveBroadcastContent !== "none");
+        }
+        saveItems(chunk);
+      }
+    } catch (e) { podProblem = "couldn't reach the YouTube API"; }
+    finally { podBusy = false; }
+    renderCounts();
+    if (S.view === "podcasts") renderList(true);
+  }
+
+  // An episode in the list: artwork, show, title, length / time left, and a play button
+  function podRow(it) {
+    const f = feedById(it.feedId) || { title: "" };
+    const li = el("li", "post pod" + (it.read || it.watched ? "" : " unread") + (Pod.item && Pod.item.key === it.key ? " current" : ""));
+    li.dataset.key = it.key;
+    li.tabIndex = 0;
+    const art = el("img", "podart");
+    art.alt = ""; art.loading = "lazy"; art.referrerPolicy = "no-referrer";
+    art.src = it.image || "";
+    art.onerror = () => { art.replaceWith(letterIcon(f, "podart")); };
+    const info = el("div", "podinfo");
+    const src = el("div", "podsrc");
+    const name = el("button", "pname", f.title); name.type = "button"; name.dataset.view = "feed:" + f.id;
+    src.append(name, el("span", "dot", "·"), el("time", null, ago(it.date)));
+    const left = it.pos > 5 && !it.watched ? Math.max(0, (it.ytDur || it.dur) - it.pos) : 0;
+    const meta = el("div", "podmeta", it.watched ? "Played" : left ? length(left) + " left" : length(it.ytDur));
+    info.append(src, el("h3", "ptitle", it.title), meta);
+    if (left && it.ytDur) { const bar = el("span", "podprog"); const fill = el("i"); fill.style.width = Math.min(100, it.pos / it.ytDur * 100) + "%"; bar.append(fill); info.append(bar); }
+    const playing = Pod.item && Pod.item.key === it.key && Pod.playing;
+    const btn = el("button", "podplay", playing ? "❚❚" : "▶");
+    btn.type = "button";
+    btn.setAttribute("aria-label", playing ? "Pause" : "Play");
+    const notes = el("button", "podnotes");
+    notes.type = "button"; notes.title = "Show notes"; notes.setAttribute("aria-label", "Show notes");
+    notes.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 5h14M5 10h14M5 15h9"/></svg>';
+    li.append(art, info, notes, btn);
+    return li;
+  }
+
+  function refreshPodRow(it) {
+    const row = document.querySelector('.post.pod[data-key="' + CSS.escape(it.key) + '"]');
+    if (row) row.replaceWith(podRow(it));
+  }
+
+  // ---------- The player bar ----------
+
+  const Pod = { item: null, mode: "", media: null, frame: null, playing: false, time: 0, dur: 0, rate: 1, lastSave: 0, timer: 0 };
+  const RATES = [1, 1.25, 1.5, 1.75, 2];
+
+  async function podPlay(it, at) {
+    if (Pod.item && Pod.item.key === it.key) { if (at != null) podSeek(at); else podToggle(); return; }
+    podStop();
+    stopPlayer();
+    Pod.item = it;
+    Pod.dur = it.ytDur || it.dur || 0;
+    const start = at != null ? at : !it.watched && it.pos > 5 && (!Pod.dur || it.pos < Pod.dur - 10) ? it.pos : 0;
+    Pod.time = start;
+    const f = feedById(it.feedId) || { title: "" };
+    $("pb-title").textContent = it.title;
+    $("pb-sub").textContent = f.title;
+    $("pb-art").src = it.image || "";
+    $("podbar").hidden = false;
+    document.body.classList.add("podding");
+    podUi();
+    setRead(it, true);
+    if (S.view === "podcasts") refreshPodRow(it);
+    // Audio only from your own Invidious server; YouTube's player otherwise
+    const audio = S.settings.invidious ? await invidiousAudio(it.video.id) : "";
+    if (Pod.item !== it) return;
+    if (audio) podAudio(it, audio, start); else podYouTube(it, start);
+  }
+
+  async function invidiousAudio(id) {
+    const base = S.settings.invidious.replace(/\/+$/, "");
+    const api = base + "/api/v1/videos/" + encodeURIComponent(id) + "?local=true";
+    let data = null;
+    try { data = await (await fetch(api)).json(); } catch (e) {
+      try { const [r] = await fetchBatch([api]); if (r.ok) data = JSON.parse(r.body); } catch (e2) { /* none */ }
+    }
+    const audio = (data && data.adaptiveFormats || []).filter(f => f.url && /^audio\//.test(f.type || ""));
+    // mp4 (AAC) plays everywhere, iPhones included; then the best bitrate
+    audio.sort((a, b) => (/mp4/.test(b.type) - /mp4/.test(a.type)) || ((+b.bitrate || 0) - (+a.bitrate || 0)));
+    if (!audio.length) return "";
+    return audio[0].url.startsWith("/") ? base + audio[0].url : audio[0].url;
+  }
+
+  function podAudio(it, url, start) {
+    Pod.mode = "audio";
+    const a = new Audio();
+    a.preload = "auto";
+    a.src = url;
+    a.playbackRate = Pod.rate;
+    a.addEventListener("loadedmetadata", () => { if (start) a.currentTime = start; a.playbackRate = Pod.rate; a.play().catch(() => {}); });
+    a.addEventListener("timeupdate", () => podTick(a.currentTime, a.duration));
+    a.addEventListener("play", () => { Pod.playing = true; podUi(); });
+    a.addEventListener("pause", () => { Pod.playing = false; podTick(a.currentTime, a.duration, true); podUi(); });
+    a.addEventListener("ended", podEnded);
+    a.addEventListener("error", () => { if (Pod.item === it && Pod.mode === "audio") { toast("Your Invidious server couldn't play it; using YouTube's player"); podYouTube(it, Pod.time); } });
+    Pod.media = a;
+    $("pb-media").replaceChildren();
+    $("podbar").classList.remove("yt");
+    mediaSession(it);
+  }
+
+  function podYouTube(it, start) {
+    Pod.mode = "yt";
+    if (Pod.media) { Pod.media.pause(); Pod.media = null; }
+    const f = el("iframe");
+    const q = new URLSearchParams({ autoplay: "1", enablejsapi: "1", rel: "0", playsinline: "1", controls: "0", origin: location.origin });
+    if (start) q.set("start", Math.floor(start));
+    f.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(it.video.id) + "?" + q;
+    f.title = it.title;
+    f.allow = "autoplay; encrypted-media; picture-in-picture";
+    f.referrerPolicy = "strict-origin-when-cross-origin";
+    f.addEventListener("load", () => {
+      clearInterval(Pod.timer);
+      let n = 0;
+      const hello = () => { if (Pod.frame !== f || ++n > 20) return clearInterval(Pod.timer); try { f.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 2, channel: "widget" }), "*"); } catch (e) {} };
+      hello();
+      Pod.timer = setInterval(hello, 500);
+    });
+    Pod.frame = f;
+    $("pb-media").replaceChildren(f);
+    $("podbar").classList.add("yt");
+  }
+
+  function ytCommand(func, args) {
+    if (Pod.frame) Pod.frame.contentWindow.postMessage(JSON.stringify({ event: "command", func, args: args || [], id: 2, channel: "widget" }), "*");
+  }
+
+  addEventListener("message", (e) => {
+    if (!Pod.frame || e.source !== Pod.frame.contentWindow || !/^https:\/\/www\.youtube(-nocookie)?\.com$/.test(e.origin)) return;
+    let d;
+    try { d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch (err) { return; }
+    if (!d || !d.event) return;
+    clearInterval(Pod.timer);
+    if (d.event === "onError") {
+      // Playable only on YouTube
+      $("pb-sub").textContent = "Plays only on YouTube · set YouTube fallback to play it here";
+      Pod.playing = false; podUi();
+      return;
+    }
+    if (d.event === "initialDelivery" && Pod.rate !== 1) ytCommand("setPlaybackRate", [Pod.rate]);
+    const info = d.info || {};
+    if (typeof info.playerState === "number") {
+      if (info.playerState === 1) Pod.playing = true;
+      if (info.playerState === 2) { Pod.playing = false; podTick(Pod.time, Pod.dur, true); }
+      if (info.playerState === 0) return podEnded();
+      podUi();
+    }
+    if (typeof info.currentTime === "number") podTick(info.currentTime, info.duration);
+  });
+
+  function podTick(t, dur, force) {
+    const it = Pod.item;
+    if (!it || !isFinite(t)) return;
+    Pod.time = t;
+    if (dur && isFinite(dur)) Pod.dur = dur;
+    it.pos = t;
+    if (Pod.dur) it.dur = Pod.dur;
+    if (force || Date.now() - Pod.lastSave > 5000) { Pod.lastSave = Date.now(); saveItems([it]); }
+    podUi();
+  }
+
+  function podEnded() {
+    const it = Pod.item;
+    if (!it) return;
+    it.watched = true;
+    it.pos = 0;
+    saveItems([it]);
+    Pod.playing = false;
+    podUi();
+    toast("Finished: " + it.title.slice(0, 60));
+    if (S.view === "podcasts") refreshPodRow(it);
+    renderCounts();
+  }
+
+  function podToggle() {
+    if (!Pod.item) return;
+    if (Pod.mode === "audio" && Pod.media) { if (Pod.media.paused) Pod.media.play().catch(() => {}); else Pod.media.pause(); }
+    else if (Pod.mode === "yt") { ytCommand(Pod.playing ? "pauseVideo" : "playVideo"); Pod.playing = !Pod.playing; podUi(); }
+  }
+
+  function podSeek(t) {
+    t = Math.max(0, Math.min(Pod.dur || t, t));
+    if (Pod.mode === "audio" && Pod.media) { Pod.media.currentTime = t; Pod.media.play().catch(() => {}); }
+    else if (Pod.mode === "yt") { ytCommand("seekTo", [t, true]); ytCommand("playVideo"); }
+    Pod.time = t;
+    podUi();
+  }
+
+  function podStop() {
+    const it = Pod.item;
+    if (it) { it.pos = Pod.time; saveItems([it]); }
+    clearInterval(Pod.timer);
+    if (Pod.media) { Pod.media.pause(); Pod.media.removeAttribute("src"); Pod.media.load(); }
+    Pod.media = Pod.frame = null;
+    Pod.item = null;
+    Pod.playing = false;
+    $("pb-media").replaceChildren();
+    if (it && S.view === "podcasts") refreshPodRow(it);
+  }
+
+  function podUi() {
+    $("pb-play").innerHTML = Pod.playing ? '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg>';
+    $("pb-play").setAttribute("aria-label", Pod.playing ? "Pause" : "Play");
+    $("pb-time").textContent = hms(Pod.time);
+    $("pb-left").textContent = Pod.dur ? "-" + hms(Pod.dur - Pod.time) : "";
+    if (!podDragging) $("pb-seek").value = Pod.dur ? Math.round(Pod.time / Pod.dur * 1000) : 0;
+    $("pb-rate").textContent = Pod.rate + "×";
+    const row = Pod.item && document.querySelector('.post.pod[data-key="' + CSS.escape(Pod.item.key) + '"] .podplay');
+    if (row) { row.textContent = Pod.playing ? "❚❚" : "▶"; row.setAttribute("aria-label", Pod.playing ? "Pause" : "Play"); }
+    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = Pod.playing ? "playing" : "paused";
+  }
+
+  // Lock screen / headphone controls (audio mode)
+  function mediaSession(it) {
+    if (!("mediaSession" in navigator)) return;
+    const f = feedById(it.feedId) || { title: "" };
+    navigator.mediaSession.metadata = new MediaMetadata({ title: it.title, artist: f.title, artwork: it.image ? [{ src: it.image, sizes: "480x360" }] : [] });
+    const set = (a, fn) => { try { navigator.mediaSession.setActionHandler(a, fn); } catch (e) {} };
+    set("play", () => podToggle());
+    set("pause", () => podToggle());
+    set("seekbackward", () => podSeek(Pod.time - 15));
+    set("seekforward", () => podSeek(Pod.time + 30));
+    set("seekto", (d) => podSeek(d.seekTime));
+  }
+
+  let podDragging = false;
+  $("pb-play").onclick = podToggle;
+  $("pb-back").onclick = () => podSeek(Pod.time - 15);
+  $("pb-fwd").onclick = () => podSeek(Pod.time + 30);
+  $("pb-rate").onclick = () => {
+    Pod.rate = RATES[(RATES.indexOf(Pod.rate) + 1) % RATES.length];
+    if (Pod.media) Pod.media.playbackRate = Pod.rate;
+    if (Pod.mode === "yt") ytCommand("setPlaybackRate", [Pod.rate]);
+    podUi();
+  };
+  $("pb-close").onclick = () => { podStop(); $("podbar").hidden = true; document.body.classList.remove("podding"); };
+  $("pb-title").onclick = () => { if (Pod.item) openArticle(Pod.item.key); };
+  $("pb-seek").addEventListener("input", () => { podDragging = true; if (Pod.dur) $("pb-time").textContent = hms($("pb-seek").value / 1000 * Pod.dur); });
+  $("pb-seek").addEventListener("change", () => { podDragging = false; if (Pod.dur) podSeek($("pb-seek").value / 1000 * Pod.dur); });
 
   // ---------- Views / navigation ----------
 
@@ -1434,6 +1751,8 @@
     closeDrawer();
     $("add-url").value = "";
     $("add-group").value = S.view.startsWith("group:") ? S.view.slice(6) : "";
+    $("add-podcast").checked = S.view === "podcasts";
+    $("add-pod-row").hidden = S.view !== "podcasts";
     addState.input = "";
     addState.found = null;
     showAddResults();
@@ -1505,6 +1824,8 @@
   }
 
   $("add-url").addEventListener("input", () => {
+    // The podcast option is offered for YouTube addresses (and always in Podcasts)
+    $("add-pod-row").hidden = !(S.view === "podcasts" || /youtu\.?be|youtube\.com/i.test($("add-url").value));
     clearTimeout(addState.timer);
     const v = $("add-url").value.trim();
     if (v === addState.input) return;
@@ -1558,6 +1879,9 @@
     $("flt-reposts").checked = !!r.noReposts;
     $("flt-replies").checked = !!r.noReplies;
     $("flt-x").hidden = !f.x;
+    $("pod-opts").hidden = !YT_FEED.test(f.url);
+    $("feed-podcast").checked = !!f.podcast;
+    $("feed-podmin").value = f.podMin || 60;
     $("feed-error").textContent = f.error ? "Last refresh: " + f.error : "";
     $("feed-error").hidden = !f.error;
     $("feed-dialog").showModal();
@@ -1572,6 +1896,12 @@
     const filters = { mute: $("flt-mute").value.trim(), only: $("flt-only").value.trim(), mediaOnly: $("flt-media").checked,
       noReposts: !!editing.x && $("flt-reposts").checked, noReplies: !!editing.x && $("flt-replies").checked };
     if (hasFilters({ filters })) editing.filters = filters; else delete editing.filters;
+    if (YT_FEED.test(editing.url)) {
+      const wasPod = !!editing.podcast;
+      if ($("feed-podcast").checked) { editing.podcast = true; editing.podMin = Math.max(1, Math.min(600, parseInt($("feed-podmin").value, 10) || 60)); }
+      else { delete editing.podcast; delete editing.podMin; }
+      if (!wasPod && editing.podcast) setTimeout(podDurations, 0);
+    }
     S.feeds.sort((a, b) => a.title.localeCompare(b.title));
     saveFeeds();
     renderFeeds();
@@ -1683,6 +2013,12 @@
     if (!li) return;
     const it = S.items.get(li.dataset.key);
     if (!it) return;
+    if (li.classList.contains("pod")) {
+      const goto = e.target.closest("[data-view]");
+      if (goto) return selectView(goto.dataset.view);
+      if (e.target.closest(".podnotes")) return openArticle(it.key);
+      return podPlay(it);
+    }
     if (e.target.closest("a, .player")) return;   // links and the player handle themselves
     const goto = e.target.closest("[data-view]");
     if (goto) return selectView(goto.dataset.view);
@@ -1704,7 +2040,7 @@
   $("menu-btn").onclick = openDrawer;
   $("scrim").onclick = closeDrawer;
   function refreshView() {
-    const feeds = S.view.startsWith("feed:") ? [feedById(S.view.slice(5))].filter(Boolean) : S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.feeds;
+    const feeds = S.view.startsWith("feed:") ? [feedById(S.view.slice(5))].filter(Boolean) : S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.view === "podcasts" ? S.feeds.filter(f => f.podcast) : S.feeds;
     if (!feeds.length) { endPull(); return openAddDialog(); }
     refresh(feeds);
   }
@@ -1922,6 +2258,7 @@
     applyYtKey();
     renderFeeds();
     renderList();
+    podDurations();
     refreshStale();
     Account.init(accountApi);
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});

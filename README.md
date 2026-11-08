@@ -112,6 +112,20 @@ The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in
   link posts show the site they link to, and YouTube links play inline. Opening a post's original goes to its comments.
 - Reddit sometimes rate-limits; a failed refresh just tries again next time.
 
+## Podcasts
+
+- Follow a YouTube channel with **Podcast** ticked (offered in the Follow dialog for YouTube addresses, and set or
+  changed later in the channel's Edit dialog, with its minimum length; 60 minutes by default). Its videos over that
+  length are episodes in the **Podcasts** tab; its other videos stay out of Home and Videos.
+- Lengths come from the YouTube Data API (`videos.list`, 1 quota unit per 50 videos), so Podcasts needs the
+  **YouTube API key** setting. Live streams and premieres are skipped.
+- Episodes play in the **player bar**, which keeps playing while you browse: play/pause, back 15 s, forward 30 s,
+  speed 1–2×, seek bar, resume where you stopped, "Played" when finished. Timestamps in show notes jump the bar.
+- **Audio only** needs your own Invidious server (**YouTube fallback** setting): the bar then plays its audio-only
+  stream (`adaptiveFormats`, AAC first), which keeps going with the screen off and has lock-screen / headphone
+  controls. Without it, YouTube's player plays the episode in a small window in the bar (YouTube may pause it when
+  the screen locks).
+
 ## X (Twitter)
 
 - X has no RSS, so Reader reads accounts through **Nitter** servers (alternative X front ends that serve any public
