@@ -1,8 +1,8 @@
-// Reader: the app. State lives in memory and is saved to IndexedDB (store.js) as it changes.
+// BT Feeder: the app. State lives in memory and is saved to IndexedDB (store.js) as it changes.
 
 (() => {
   // Where feeds are fetched from: "fetch" next to this page (reader/functions/fetch.js), so the same files
-  // work at the root of Reader's own site and at /reader/ on another one. A packaged app served from
+  // work at the root of BT Feeder's own site and at /reader/ on another one. A packaged app served from
   // another origin would set the full https:// address here.
   const API_URL = new URL("fetch", document.baseURI).href;
   const BATCH = 45;                 // feeds per call; matches MAX_URLS in the function
@@ -46,7 +46,7 @@
 
   // ---------- Fetching ----------
 
-  // YouTube refuses its feeds to Cloudflare's servers. With a YouTube Data API key (Settings), Reader reads
+  // YouTube refuses its feeds to Cloudflare's servers. With a YouTube Data API key (Settings), BT Feeder reads
   // channels and playlists through the official API from this browser instead, and turns the answer into
   // the same Atom feed YouTube would have sent, so everything else works unchanged.
   const YT_FEED = /^https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?(channel_id|playlist_id)=([\w-]+)/;
@@ -102,12 +102,12 @@
     }
   }
 
-  const YT_HELP = "YouTube isn't giving its feeds to Reader's server. Add a free YouTube API key (“YouTube API key” at the bottom of the menu) and try again.";
+  const YT_HELP = "YouTube isn't giving its feeds to BT Feeder's server. Add a free YouTube API key (“YouTube API key” at the bottom of the menu) and try again.";
 
   function applyYtKey() { $("ytkey-btn").textContent = "YouTube API key: " + (S.settings.ytKey ? "On" : "Off"); }
   $("ytkey-btn").onclick = async () => {
     const r = await ask({ title: "YouTube API key",
-      text: "Used to read YouTube channels and video lengths (YouTube refuses its feeds to Reader's server).\nGet one free at console.cloud.google.com: enable “YouTube Data API v3”, then Credentials → Create API key.",
+      text: "Used to read YouTube channels and video lengths (YouTube refuses its feeds to BT Feeder's server).\nGet one free at console.cloud.google.com: enable “YouTube Data API v3”, then Credentials → Create API key.",
       input: S.settings.ytKey || "", placeholder: "AIza…", ok: "Save", extra: S.settings.ytKey ? "Remove key" : "" });
     if (r.action === "cancel") return;
     const v = r.action === "extra" ? "" : r.value;
@@ -527,7 +527,7 @@
     for (const li of document.querySelectorAll(".feed")) li.querySelector(".count").textContent = c.feeds[li.dataset.id] || "";
     for (const b of document.querySelectorAll('.ghead .nav')) b.querySelector(".count").textContent = c.groups[b.dataset.view.slice(6)] || "";
     for (const b of document.querySelectorAll(".story[data-view]")) b.classList.toggle("new", !!c.feeds[b.dataset.view.slice(5)]);
-    document.title = c.all ? "(" + c.all + ") Reader" : "Reader";
+    document.title = c.all ? "(" + c.all + ") BT Feeder" : "BT Feeder";
   }
 
   // A feed's picture: its own logo / profile picture, else the site's icon, else a coloured initial.
@@ -751,7 +751,7 @@
         empty.append(pullHint, again);
       }
       if (!S.feeds.length) {
-        empty.append(el("h3", null, "Welcome to Reader"), el("p", null, "Follow your favourite sites in one place. Everything stays on this device."));
+        empty.append(el("h3", null, "Welcome to BT Feeder"), el("p", null, "Follow your favourite sites in one place. Everything stays on this device."));
         const add = el("button", "btn primary", "Follow your first feed");
         add.onclick = openAddDialog;
         const imp = el("button", "btn", "Import OPML");
@@ -1299,7 +1299,7 @@
     return wrap;
   }
 
-  // A video or audio file in Reader's own player (remembers where you stopped). GIFs loop silently.
+  // A video or audio file in BT Feeder's own player (remembers where you stopped). GIFs loop silently.
   function mediaEl(wrap, it, v, start, onError) {
     const m = el(v.audio ? "audio" : "video");
     m.controls = true;
@@ -1462,7 +1462,7 @@
   function applyInvidious() { $("invidious-btn").textContent = "YouTube fallback: " + (S.settings.invidious ? host(S.settings.invidious) || "on" : "Off"); }
   $("invidious-btn").onclick = async () => {
     const r = await ask({ title: "YouTube fallback",
-      text: "Address of your own Invidious server. Reader uses it to play YouTube videos whose uploader doesn't allow playback in other apps, and podcasts as audio only.",
+      text: "Address of your own Invidious server. BT Feeder uses it to play YouTube videos whose uploader doesn't allow playback in other apps, and podcasts as audio only.",
       input: S.settings.invidious || "", placeholder: "https://invidious.example.com", ok: "Save", extra: S.settings.invidious ? "Turn off" : "" });
     if (r.action === "cancel") return;
     const t = r.action === "extra" ? "" : r.value;
@@ -1752,7 +1752,7 @@
     if (typeof info.playerState === "number") {
       if (info.playerState === 1) { Pod.playing = true; Pod.resumes = 0; }
       if (info.playerState === 2) {
-        // In the Android app, YouTube may pause on its own when Reader goes to the background: if you didn't
+        // In the Android app, YouTube may pause on its own when BT Feeder goes to the background: if you didn't
         // pause it (bar, notification or headphones), carry on (a few tries, so a real stop isn't fought forever)
         if (window.ReaderApp && Pod.wantPlay && Pod.resumes < 5) { Pod.resumes++; setTimeout(() => ytCommand("playVideo"), 300); return; }
         Pod.playing = false; podTick(Pod.time, Pod.dur, true);
@@ -1998,7 +1998,7 @@
   $("blocked-cancel").onclick = () => $("blocked-dialog").close();
 
   // The quoted post on its own, in the reading view: its account, full text, pictures, and its video playing
-  // in Reader's player. It's shown, never saved.
+  // in BT Feeder's player. It's shown, never saved.
   function openQuote(parent) {
     const q = parent && parent.quote;
     if (!q) return;
@@ -2322,7 +2322,7 @@
     s.classList.toggle("error", !!isError);
   }
 
-  // Reader's own question dialog, instead of the browser's prompt() / confirm() boxes.
+  // BT Feeder's own question dialog, instead of the browser's prompt() / confirm() boxes.
   // ask({ title, text, input, placeholder, ok, extra, danger }) → { action: "ok" | "extra" | "cancel", value }
   function ask(o) {
     return new Promise((resolve) => {
@@ -2635,7 +2635,7 @@
       for (const [k, v] of Object.entries((await Store.get("xprofiles")) || {})) XP.set(k, v);
       upgradeSaved();
     } catch (e) {
-      status("This browser won't let Reader save anything (private mode?). Feeds will be forgotten when you close it.", true);
+      status("This browser won't let BT Feeder save anything (private mode?). Feeds will be forgotten when you close it.", true);
     }
     applyTheme();
     applyShorts();

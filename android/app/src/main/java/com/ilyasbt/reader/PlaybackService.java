@@ -44,7 +44,7 @@ public class PlaybackService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        session = new MediaSession(this, "Reader");
+        session = new MediaSession(this, "BT Feeder");
         session.setCallback(new MediaSession.Callback() {
             @Override public void onPlay() { MainActivity.podcast("toggle"); }
             @Override public void onPause() { MainActivity.podcast("toggle"); }

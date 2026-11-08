@@ -1,5 +1,5 @@
-# Builds Reader for Android and publishes the APK at
-# https://github.com/ilyasbt/reader/releases/tag/app-latest  (download: …/releases/download/app-latest/Reader.apk)
+# Builds BT Feeder for Android and publishes the APK at
+# https://github.com/ilyasbt/reader/releases/tag/app-latest  (download: …/releases/download/app-latest/BT-Feeder.apk)
 #
 # Signing: the repository secrets ANDROID_KEYSTORE_BASE64 (the keystore file, base64) and
 # ANDROID_KEYSTORE_PASSWORD. Without them it still builds, with a throwaway key: installing such a build over
@@ -51,20 +51,20 @@ jobs:
         run: gradle assembleRelease --no-daemon --stacktrace
 
       - name: Name the APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk Reader.apk
+        run: cp android/app/build/outputs/apk/release/app-release.apk BT-Feeder.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Reader-apk
-          path: Reader.apk
+          name: BT-Feeder-apk
+          path: BT-Feeder.apk
 
       - name: Publish on the Releases page
         uses: softprops/action-gh-release@v2
         with:
           tag_name: app-latest
-          name: Reader for Android
+          name: BT Feeder for Android
           body: |
-            Latest build of Reader for Android (build ${{ github.run_number }}, ${{ github.sha }}).
-            Download **Reader.apk** below on your phone and open it to install or update.
-          files: Reader.apk
+            Latest build of BT Feeder for Android (build ${{ github.run_number }}, ${{ github.sha }}).
+            Download **BT-Feeder.apk** below on your phone and open it to install or update.
+          files: BT-Feeder.apk
           make_latest: true

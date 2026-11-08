@@ -1,4 +1,4 @@
-// Accounts and sync (optional). Reader works signed out exactly as before; signing in (email + password,
+// Accounts and sync (optional). BT Feeder works signed out exactly as before; signing in (email + password,
 // Firebase Authentication) keeps feeds, groups, filters, settings, starred posts and read state the same on
 // every device, through Cloud Firestore:
 //
@@ -440,7 +440,7 @@ const Account = (() => {
     }
     const titles = { signin: "Sign in", create: "Create an account", reset: "Reset your password" };
     box.append(el("h2", null, titles[mode]));
-    box.append(el("p", null, mode === "reset" ? "We'll email you a link to choose a new password." : "Sync your feeds, groups, filters, settings, stars and read posts across your devices. Reader still works without an account."));
+    box.append(el("p", null, mode === "reset" ? "We'll email you a link to choose a new password." : "Sync your feeds, groups, filters, settings, stars and read posts across your devices. BT Feeder still works without an account."));
     const email = input("email", "Email", "email");
     box.append(email);
     let pw = null;

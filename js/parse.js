@@ -328,7 +328,7 @@ const Parse = (() => {
         const savedImage = it.image;
         it.image = firstImage(it.html, it.link);
         if (it.video && it.video.kind === "x" && !/(Video|Gif)\s*(<br>\s*)?<img|amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb/i.test(it.html)) {
-          // Saved by an older Reader, which took the quote's video for the post's own (and dropped it from the
+          // Saved by an older BT Feeder, which took the quote's video for the post's own (and dropped it from the
           // quote): give it back to the quote, with its thumbnail
           delete it.video;
           if (!it.quote.video && !it.quote.image) { it.quote.video = true; it.quote.image = savedImage || ""; }
@@ -503,7 +503,7 @@ const Parse = (() => {
       ...feeds.filter(f => !f.group).map(f => line(f, "    ")),
       ...groups.map(g => '    <outline text="' + a(g) + '" title="' + a(g) + '">\n' + feeds.filter(f => f.group === g).map(f => line(f, "      ")).join("\n") + "\n    </outline>")
     ];
-    return '<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>Reader subscriptions</title><dateCreated>' +
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<opml version="2.0">\n  <head><title>BT Feeder subscriptions</title><dateCreated>' +
       new Date().toUTCString() + "</dateCreated></head>\n  <body>\n" + body.join("\n") + "\n  </body>\n</opml>\n";
   }
 

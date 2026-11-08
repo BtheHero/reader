@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src * data: blob:; media-src *; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
-<title>Reader</title>
+<title>BT Feeder</title>
 <meta name="description" content="A simple, private RSS and Atom feed reader.">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
@@ -24,7 +24,7 @@
   <aside class="side" id="side" aria-label="Navigation">
     <div class="brand">
       <img src="icons/icon.svg" alt="" width="30" height="30">
-      <span>Reader</span>
+      <span>BT Feeder</span>
     </div>
     <button class="account" id="account-btn" hidden>
       <svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20c1-3.8 4-5.8 7.5-5.8s6.5 2 7.5 5.8"/></svg>
@@ -100,7 +100,7 @@
 <dialog id="add-dialog">
   <form method="dialog" id="add-form">
     <h2>Follow a feed</h2>
-    <p>Paste a feed address, a website's address, a YouTube channel or playlist, or an X (Twitter) profile. Reader finds the feed.</p>
+    <p>Paste a feed address, a website's address, a YouTube channel or playlist, or an X (Twitter) profile. BT Feeder finds the feed.</p>
     <input type="text" id="add-url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="example.com, a YouTube channel, x.com/name…" required>
     <p class="error" id="add-error" role="status" hidden></p>
     <ul class="results" id="add-results" hidden></ul>

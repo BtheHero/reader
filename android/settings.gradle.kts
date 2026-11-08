@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "Reader"
+rootProject.name = "BT Feeder"
 include(":app")

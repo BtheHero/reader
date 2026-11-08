@@ -1,14 +1,14 @@
 {
-  "name": "Reader",
-  "short_name": "Reader",
-  "description": "A simple, private RSS and Atom feed reader.",
+  "name": "BT Feeder",
+  "short_name": "BT Feeder",
+  "description": "BT Feeder: your feeds, X accounts, YouTube channels and podcasts in one place.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f6f4ef",
-  "theme_color": "#c2410c",
+  "theme_color": "#22163a",
   "categories": ["news", "productivity"],
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

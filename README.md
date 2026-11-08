@@ -1,4 +1,4 @@
-# Reader
+# BT Feeder
 
 A simple, private RSS / Atom / JSON Feed reader with a social-style timeline, hosted on Cloudflare Pages.
 It has no build step: plain HTML, CSS and JavaScript, plus one Pages Function (`functions/fetch.js`).
@@ -29,7 +29,7 @@ the timeline. On phones there's a bottom tab bar (Home, Videos, follow +, Starre
 - **Read on scroll:** a post you've seen and scrolled past counts as read (switch: "Read on scroll" at the bottom of
   the sidebar). Opening a post also marks it read.
 - **Read posts leave at the next refresh:** read posts stay where they are while you scroll, and disappear when you
-  refresh or reopen Reader, so the timeline only holds what's new. The ◎ button in the top bar (or "Show read posts"
+  refresh or reopen BT Feeder, so the timeline only holds what's new. The ◎ button in the top bar (or "Show read posts"
   when you're caught up) shows them again; Starred always shows everything you starred.
 - **Pull to refresh:** pull down at the top of the timeline (touch), or keep scrolling up at the top (mouse /
   trackpad). The refresh button does the same.
@@ -48,7 +48,7 @@ the timeline. On phones there's a bottom tab bar (Home, Videos, follow +, Starre
 
 ## Accounts and sync (optional)
 
-Signed out, Reader keeps everything on the device, as always. With a Firebase project set in `js/config.js`,
+Signed out, BT Feeder keeps everything on the device, as always. With a Firebase project set in `js/config.js`,
 an account button appears: sign in with email and password and your feeds, groups, filters, settings, starred
 posts and read posts stay the same on every device (live, through Cloud Firestore). Signing in on a device that
 already has feeds merges them into the account (same address = same feed). Sign out keeps the device's copy;
@@ -90,20 +90,20 @@ The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in
 ## Videos and podcasts
 
 - **YouTube:** paste a channel (`youtube.com/@name`, `/channel/UC…`), a playlist link, or even one of the channel's
-  video links into Add feed. Reader subscribes to the channel's official RSS feed (YouTube only lists the latest 15 videos there).
+  video links into Add feed. BT Feeder subscribes to the channel's official RSS feed (YouTube only lists the latest 15 videos there).
 - **YouTube refuses its feeds to Cloudflare's servers** (`feeds/videos.xml` answers 404 to the fetcher, though
-  channel pages still load). Add a free **YouTube Data API key** (bottom of the menu): Reader then reads channels
+  channel pages still load). Add a free **YouTube Data API key** (bottom of the menu): BT Feeder then reads channels
   and playlists from this browser through the official API (`playlistItems` + `channels`, 2 quota units per
   channel refresh out of 10,000 a day) and builds the same Atom feed from it. Create the key at
   console.cloud.google.com → enable "YouTube Data API v3" → Credentials → Create API key, and restrict it to
   this site's address (HTTP referrers) and to the YouTube Data API.
-- Videos play in YouTube's privacy-enhanced embed (`youtube-nocookie.com`). Reader talks to the player with
+- Videos play in YouTube's privacy-enhanced embed (`youtube-nocookie.com`). BT Feeder talks to the player with
   `postMessage` (no YouTube script is loaded into the page) to remember where you stopped, resume there, mark videos
   watched, and make timestamps in descriptions (`1:30`) jump the video.
-- If YouTube's privacy-enhanced player refuses a video, Reader retries in YouTube's standard player.
+- If YouTube's privacy-enhanced player refuses a video, BT Feeder retries in YouTube's standard player.
 - Videos whose uploader allows playback only on YouTube get a "Plays only on YouTube" card (badged in the timeline)
   with a Watch on YouTube button, unless you set **YouTube fallback** (bottom of the sidebar) to your own
-  [Invidious](https://invidious.io) server: Reader then plays them from its `/api/v1/videos/<id>?local=true`
+  [Invidious](https://invidious.io) server: BT Feeder then plays them from its `/api/v1/videos/<id>?local=true`
   streams. Public Invidious / Piped servers refuse Cloudflare or are down, so it has to be your own (personal use;
   this goes against YouTube's terms, so leave it off in any Play Store version).
 - **Videos** view lists every video; **Shorts: Hidden** (bottom of the sidebar) hides YouTube Shorts everywhere.
@@ -114,7 +114,7 @@ The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in
 ## Reddit
 
 - Paste any Reddit address (a subreddit, a sorted listing like `/top/?t=week`, a user, a post) or just `r/name` /
-  `u/name`; Reader follows its feed at `www.reddit.com/…/.rss` (Reddit's pages don't link to it, and
+  `u/name`; BT Feeder follows its feed at `www.reddit.com/…/.rss` (Reddit's pages don't link to it, and
   `old.reddit.com` refuses Cloudflare).
 - Posts are tidied: the "submitted by … [link] [comments]" table is removed, image posts get their full-size picture,
   link posts show the site they link to, and YouTube links play inline. Opening a post's original goes to its comments.
@@ -136,16 +136,16 @@ The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in
 
 ## X (Twitter)
 
-- X has no RSS, so Reader reads accounts through **Nitter** servers (alternative X front ends that serve any public
-  account as RSS). Paste any `x.com` / `twitter.com` profile or post link; Reader subscribes to that account.
+- X has no RSS, so BT Feeder reads accounts through **Nitter** servers (alternative X front ends that serve any public
+  account as RSS). Paste any `x.com` / `twitter.com` profile or post link; BT Feeder subscribes to that account.
 - Servers come from the live list at [d420.net](https://d420.net/) (`/api/v1/instances`, readable straight from the
   browser), best uptime and speed first, checked at most once an hour. Only the servers whose operators allow
   automated use are used (`NITTER_ALLOWED` in `js/app.js`, also the fallback when d420.net is unreachable).
 - If an account's server stops working, the next refresh moves it to another one. Posts are stored by their X post id
   and link to x.com, so switching servers never duplicates them.
 - **Videos and GIFs:** Nitter's feed has no video file, only a thumbnail labelled "Video". When you press play,
-  Reader loads the post's Nitter page (one Function request, three servers tried) and plays the `.mp4` it links on
-  X's video server in Reader's own player: just the video, resumable, GIFs looping silently. The address is saved,
+  BT Feeder loads the post's Nitter page (one Function request, three servers tried) and plays the `.mp4` it links on
+  X's video server in BT Feeder's own player: just the video, resumable, GIFs looping silently. The address is saved,
   so playing again costs nothing. If no server has it, X's official embedded post is used instead. Links inside
   posts point at t.co / x.com rather than the Nitter server.
 - Nitter servers come and go; if X accounts stop loading, check d420.net and update `NITTER_ALLOWED`.
@@ -167,7 +167,7 @@ Then open http://localhost:8788/
 The usual route for a PWA is a **Trusted Web Activity**: a small Android wrapper that opens the site full-screen.
 Same code, and updates to the site reach the app without a new Play Store release.
 
-1. Optionally give Reader its own domain (e.g. `reader.example.com`) instead of the `pages.dev` address, before
+1. Optionally give BT Feeder its own domain (e.g. `reader.example.com`) instead of the `pages.dev` address, before
    publishing: the app is tied to the address it's installed from.
    Then change `start_url`/`scope`/`id` in the manifest and `API_URL` in `js/app.js` if the paths change.
 2. Generate the Android project with [PWABuilder](https://www.pwabuilder.com/) or `npx @bubblewrap/cli init --manifest https://<domain>/manifest.webmanifest`.
@@ -184,10 +184,10 @@ a new build, and adds what a website can't do:
   of ad and tracking servers (`AdBlock.kt`) and dropped. YouTube mixes some ads into the video stream itself, so a
   few can still get through. (Google Play forbids blocking other services' ads: this build is for installing
   yourself.)
-- Links to other sites open in their app (YouTube, X…) or the browser; Back closes what's open in Reader.
+- Links to other sites open in their app (YouTube, X…) or the browser; Back closes what's open in BT Feeder.
 - OPML import (file picker) and export (saved to Downloads), fullscreen video.
 - Podcasts keep playing with the screen off: while something plays, a notification keeps the app running.
 
 Built by GitHub Actions (`.github/workflows/android.yml`) on every change under `android/`, and published at
-**https://github.com/ilyasbt/reader/releases/tag/app-latest** → `Reader.apk`. Signing uses the repository secrets
+**https://github.com/ilyasbt/reader/releases/tag/app-latest** → `BT-Feeder.apk`. Signing uses the repository secrets
 `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD`, so each build installs over the previous one.
