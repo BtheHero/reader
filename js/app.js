@@ -45,7 +45,18 @@
 
   // ---------- Fetching ----------
 
+  // YouTube refuses its feeds to Cloudflare's servers. With a YouTube Data API key (Settings), Reader reads
+  // channels and playlists through the official API from this browser instead, and turns the answer into
+  // the same Atom feed YouTube would have sent, so everything else works unchanged.
+  const YT_FEED = /^https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?(channel_id|playlist_id)=([\w-]+)/;
+
   async function fetchBatch(urls) {
+    if (S.settings.ytKey && urls.some(u => YT_FEED.test(u))) {
+      const yt = urls.filter(u => YT_FEED.test(u)), rest = urls.filter(u => !YT_FEED.test(u));
+      const [a, b] = await Promise.all([Promise.all(yt.map(youtubeApiFeed)), rest.length ? fetchBatch(rest) : []]);
+      const got = new Map([...a, ...b].map(r => [r.url, r]));
+      return urls.map(u => got.get(u));
+    }
     const out = [];
     for (let i = 0; i < urls.length; i += BATCH) {
       const res = await fetch(API_URL, {
@@ -58,6 +69,51 @@
     }
     return out;
   }
+
+  async function youtubeApiFeed(url) {
+    const [, kind, id] = YT_FEED.exec(url);
+    const playlist = kind === "channel_id" ? "UU" + id.slice(2) : id;
+    const api = (path, params) => fetch("https://www.googleapis.com/youtube/v3/" + path + "?" + new URLSearchParams(params), { headers: { "X-Goog-Api-Key": S.settings.ytKey } })
+      .then(r => r.json());
+    try {
+      const [list, about] = await Promise.all([
+        api("playlistItems", { part: "snippet,contentDetails", playlistId: playlist, maxResults: "25" }),
+        kind === "channel_id" ? api("channels", { part: "snippet", id }) : api("playlists", { part: "snippet", id })
+      ]);
+      const err = list.error || about.error;
+      if (err) return { url, ok: false, status: err.code, error: "YouTube API: " + (err.message || err.status || "error").replace(/<[^>]*>/g, "") };
+      const info = (about.items && about.items[0] && about.items[0].snippet) || {};
+      const x = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const thumb = (t) => t && (t.maxres || t.standard || t.high || t.medium || t.default || {}).url || "";
+      const home = kind === "channel_id" ? "https://www.youtube.com/channel/" + id : "https://www.youtube.com/playlist?list=" + id;
+      const entries = (list.items || []).filter(i => i.snippet && !/^(Private|Deleted) video$/.test(i.snippet.title)).map(i => {
+        const s = i.snippet, vid = (i.contentDetails && i.contentDetails.videoId) || (s.resourceId && s.resourceId.videoId);
+        return "<entry><id>yt:video:" + x(vid) + "</id><yt:videoId>" + x(vid) + "</yt:videoId><title>" + x(s.title) + "</title>" +
+          '<link rel="alternate" href="https://www.youtube.com/watch?v=' + x(vid) + '"/><author><name>' + x(s.videoOwnerChannelTitle || info.title) + "</name></author>" +
+          "<published>" + x((i.contentDetails && i.contentDetails.videoPublishedAt) || s.publishedAt) + "</published>" +
+          '<media:group><media:thumbnail url="' + x(thumb(s.thumbnails)) + '"/><media:description>' + x(s.description) + "</media:description></media:group></entry>";
+      });
+      const body = '<?xml version="1.0" encoding="UTF-8"?><feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">' +
+        "<title>" + x(info.title || "YouTube") + '</title><link rel="alternate" href="' + home + '"/><icon>' + x(thumb(info.thumbnails)) + "</icon>" + entries.join("") + "</feed>";
+      return { url, ok: true, status: 200, finalUrl: url, type: "application/atom+xml", body };
+    } catch (e) {
+      return { url, ok: false, error: "Couldn't reach the YouTube API" };
+    }
+  }
+
+  const YT_HELP = "YouTube isn't giving its feeds to Reader's server. Add a free YouTube API key (“YouTube API key” at the bottom of the menu) and try again.";
+
+  function applyYtKey() { $("ytkey-btn").textContent = "YouTube API key: " + (S.settings.ytKey ? "On" : "Off"); }
+  $("ytkey-btn").onclick = () => {
+    const v = prompt("YouTube Data API key, used to read YouTube channels (YouTube refuses its feeds to Reader's server).\nGet one free at console.cloud.google.com (enable “YouTube Data API v3”, then Credentials → Create API key).\nLeave empty to remove it.", S.settings.ytKey || "");
+    if (v == null) return;
+    S.settings.ytKey = v.trim();
+    saveSettings();
+    applyYtKey();
+    toast(S.settings.ytKey ? "YouTube API key saved. Refreshing YouTube channels…" : "YouTube API key removed");
+    const yt = S.feeds.filter(f => YT_FEED.test(f.url));
+    if (S.settings.ytKey && yt.length) refresh(yt);
+  };
 
   // Merge freshly parsed articles into a feed. Returns how many are new.
   function merge(feed, parsed) {
@@ -104,7 +160,7 @@
         const f = feeds[i];
         f.lastFetch = Date.now();
         const parsed = r.ok ? Parse.parseFeed(r.body, r.finalUrl || f.url) : null;
-        if (!parsed) { f.error = r.ok ? "This address no longer returns a feed" : r.error; failed++; return; }
+        if (!parsed) { f.error = r.ok ? "This address no longer returns a feed" : YT_FEED.test(f.url) && !S.settings.ytKey ? YT_HELP : r.error; failed++; return; }
         added += apply(f, parsed);
       });
       // X accounts whose Nitter server failed: move them to another working server
@@ -255,6 +311,7 @@
     });
     if (!found.length) {
       if (r && !r.ok && !results.some(c => c.ok)) throw new Error("Couldn't load that address" + (r.error ? " (" + r.error.replace(/^The site/, "the site") + ")" : "") + ". Check it's typed correctly.");
+      if (/youtu\.?be/.test(url) && candidates.some(c => YT_FEED.test(c)) && !S.settings.ytKey) throw new Error(YT_HELP);
       throw new Error(/youtu\.?be/.test(url) ? "Couldn't find that YouTube channel. Try the channel's page address (youtube.com/@name)." : "Couldn't find a feed at that address.");
     }
     return found;
@@ -1787,6 +1844,7 @@
     applyShorts();
     applyScrollRead();
     applyInvidious();
+    applyYtKey();
     renderFeeds();
     renderList();
     refreshStale();

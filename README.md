@@ -58,6 +58,12 @@ the timeline. On phones there's a bottom tab bar (Home, Videos, follow +, Starre
 
 - **YouTube:** paste a channel (`youtube.com/@name`, `/channel/UC…`), a playlist link, or even one of the channel's
   video links into Add feed. Reader subscribes to the channel's official RSS feed (YouTube only lists the latest 15 videos there).
+- **YouTube refuses its feeds to Cloudflare's servers** (`feeds/videos.xml` answers 404 to the fetcher, though
+  channel pages still load). Add a free **YouTube Data API key** (bottom of the menu): Reader then reads channels
+  and playlists from this browser through the official API (`playlistItems` + `channels`, 2 quota units per
+  channel refresh out of 10,000 a day) and builds the same Atom feed from it. Create the key at
+  console.cloud.google.com → enable "YouTube Data API v3" → Credentials → Create API key, and restrict it to
+  this site's address (HTTP referrers) and to the YouTube Data API.
 - Videos play in YouTube's privacy-enhanced embed (`youtube-nocookie.com`). Reader talks to the player with
   `postMessage` (no YouTube script is loaded into the page) to remember where you stopped, resume there, mark videos
   watched, and make timestamps in descriptions (`1:30`) jump the video.
