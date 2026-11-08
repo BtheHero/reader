@@ -657,3 +657,12 @@ dialog input[type="text"], #ask-input, #acc-body input, .result { background: va
   body.podding .toast { bottom: calc(222px + env(safe-area-inset-bottom)); }
   .article.has-video .player:not(.short):not(.audio) { margin: 0 -18px 18px; }
 }
+
+/* Nothing is ever wider than the screen: the timeline and the open post only scroll up and down */
+html, body { max-width: 100%; overflow-x: hidden; overscroll-behavior-x: none; }
+.app, .main { max-width: 100vw; }
+.timeline, .reader .scroll { overflow-x: hidden; overscroll-behavior-x: none; }
+.items { grid-template-columns: minmax(0, 1fr); }
+.post, .post > *:not(.pactions), .quote, .content { min-width: 0; max-width: 100%; }
+.ptitle, .pname, .content, .qtext, .ptext { overflow-wrap: anywhere; }
+.content iframe, .content embed, .content object, .content svg { max-width: 100%; }
