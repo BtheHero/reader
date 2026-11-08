@@ -42,7 +42,7 @@
   // Saved on this device, and mirrored to the account when signed in (account.js)
   const saveFeeds = () => { Account.changed("feeds"); return Store.set("feeds", S.feeds); };
   const saveSettings = () => { Account.changed("settings"); return Store.set("settings", S.settings); };
-  const saveItems = (list) => Store.putItems(list.map(it => ({ ...it })));
+  const saveItems = (list) => Store.putItems(list.filter(it => !it.virtual).map(it => ({ ...it })));
 
   // ---------- Fetching ----------
 
@@ -1134,8 +1134,9 @@
   // ---------- Reading ----------
 
   function openArticle(key, { fromHistory } = {}) {
-    const it = S.items.get(key);
+    const it = typeof key === "object" ? key : S.items.get(key);
     if (!it) return;
+    key = it.key;
     const prev = document.querySelector(".post.active");
     if (prev) prev.classList.remove("active");
     S.current = key;
@@ -1159,11 +1160,13 @@
     } else if (it.video) art.append(playerFor(it));
     const head = el("header");
     const src = el("a", "src");
-    const rpOf = f.x && isRepost(it) ? repostOf(it) : null;
+    // A repost, or a quoted post opened on its own: the original account in the header
+    const rpOf = it.virtual ? it.quoteAuthor.handle : f.x && isRepost(it) ? repostOf(it) : null;
     if (rpOf) {
       const pr = xProfile(rpOf);
-      head.append(el("div", "repost", "↻ @" + f.x + " reposted"));
-      src.append(avatar(repostFeed(rpOf, pr)), el("span", null, pr && pr.name ? pr.name : "@" + rpOf));
+      if (!it.virtual) head.append(el("div", "repost", "↻ @" + f.x + " reposted"));
+      const nm = it.virtual && it.quoteAuthor.name ? it.quoteAuthor.name : pr && pr.name ? pr.name : "@" + rpOf;
+      src.append(avatar(repostFeed(rpOf, pr || { name: nm })), el("span", null, nm));
     } else src.append(avatar(f), el("span", null, f.title));
     src.href = rpOf ? "https://x.com/" + rpOf : f.siteUrl || it.link || "#";
     src.target = "_blank";
@@ -1174,7 +1177,7 @@
       a.href = it.link; a.target = "_blank"; a.rel = "noopener noreferrer";
       h.append(a);
     } else h.textContent = it.title;
-    const by = el("p", "byline", [it.author, new Date(it.date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })].filter(Boolean).join(" · "));
+    const by = el("p", "byline", [it.author, it.date ? new Date(it.date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : ""].filter(Boolean).join(" · "));
     // A social post's title only repeats its text: show the text once
     if (isMicro(it, f)) { head.append(src, by); head.classList.add("micro"); }
     else head.append(src, h, by);
@@ -1201,8 +1204,10 @@
     $("reader-scroll").scrollTop = 0;
     $("open-btn").href = it.link || "#";
     $("open-btn").hidden = !it.link;
-    setRead(it, true);
+    if (!it.virtual) setRead(it, true);
     syncReaderButtons(it);
+    // A quoted post isn't one of your posts: no star / read buttons
+    $("star-btn").hidden = $("read-btn").hidden = !!it.virtual;
     document.body.classList.add("reading");
     if (!fromHistory && !(history.state && history.state.article)) history.pushState({ article: key }, "");
   }
@@ -1542,6 +1547,7 @@
     }
   }
   $("article").addEventListener("click", (e) => {
+    if (e.target.closest(".quote")) return openQuote(S.items.get(S.current));
     const b = e.target.closest(".ts");
     if (b) {
       const it = S.items.get(S.current), pf = it && feedById(it.feedId);
@@ -1887,10 +1893,10 @@
   // The whole card opens the quoted post on X.
   function quoteEl(it, full) {
     const q = it.quote;
-    const card = el("a", "quote" + (full ? " full" : ""));
-    card.href = q.id ? "https://x.com/" + q.handle + "/status/" + q.id : "https://x.com/" + q.handle;
-    card.target = "_blank";
-    card.rel = "noopener noreferrer";
+    const card = el("div", "quote" + (full ? " full" : ""));
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", "Open the quoted post");
     const prof = q.handle ? xProfile(q.handle) : null;
     const head = el("div", "qhead");
     head.append(avatar(repostFeed(q.handle, prof && prof.icon ? { ...prof, name: q.name || prof.name } : { name: q.name || q.handle }), "qav"),
@@ -1901,12 +1907,35 @@
     if (q.image) {
       const box = el("div", "qmedia");
       const img = el("img"); img.src = q.image; img.alt = ""; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
-      img.onerror = () => box.remove();
+      // A video keeps its box and ▶ even if the thumbnail doesn't load; a picture that fails goes
+      img.onerror = () => { if (q.video) img.remove(); else box.remove(); };
       box.append(img);
       if (q.video) box.append(el("span", "play", "▶"));
       card.append(box);
     }
     return card;
+  }
+
+  // The quoted post on its own, in the reading view: its account, full text, pictures, and its video playing
+  // in Reader's player. It's shown, never saved.
+  function openQuote(parent) {
+    const q = parent && parent.quote;
+    if (!q) return;
+    openArticle({
+      virtual: true,
+      key: "quote:" + (q.id || parent.key),
+      feedId: parent.feedId,
+      id: "x:" + q.id,
+      title: Parse.plain(q.html, 90) || "@" + q.handle,
+      link: q.id ? "https://x.com/" + q.handle + "/status/" + q.id : "https://x.com/" + q.handle,
+      date: 0,
+      author: "@" + q.handle,
+      html: q.html,
+      image: q.image,
+      video: q.video && q.id ? { kind: "x", id: q.id } : null,
+      read: true,
+      quoteAuthor: { handle: q.handle, name: q.name }
+    });
   }
 
   async function lookupProfiles() {
@@ -2277,6 +2306,7 @@
       if (e.target.closest(".podnotes")) return openArticle(it.key);
       return podPlay(it);
     }
+    if (e.target.closest(".quote")) return openQuote(it);
     if (e.target.closest("a, .player")) return;   // links and the player handle themselves
     const goto = e.target.closest("[data-view]");
     if (goto) return selectView(goto.dataset.view);
