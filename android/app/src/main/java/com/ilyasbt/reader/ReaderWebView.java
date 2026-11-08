@@ -17,7 +17,8 @@ public class ReaderWebView extends WebView {
 
     @Override
     protected void onWindowVisibilityChanged(int visibility) {
-        // GONE still goes through (the window is really being torn down); hidden counts as visible
-        super.onWindowVisibilityChanged(visibility == View.GONE ? View.GONE : View.VISIBLE);
+        // Only ever pass on "visible". Leaving the app or turning the screen off reports GONE or INVISIBLE;
+        // passing either on would make the page hidden, and players pause on a hidden page.
+        if (visibility == View.VISIBLE) super.onWindowVisibilityChanged(View.VISIBLE);
     }
 }

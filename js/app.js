@@ -1517,7 +1517,7 @@
 
   // ---------- The player bar ----------
 
-  const Pod = { item: null, mode: "", media: null, frame: null, playing: false, time: 0, dur: 0, rate: 1, lastSave: 0, timer: 0 };
+  const Pod = { item: null, mode: "", media: null, frame: null, playing: false, time: 0, dur: 0, rate: 1, lastSave: 0, timer: 0, wantPlay: false, resumes: 0 };
   const RATES = [1, 1.25, 1.5, 1.75, 2];
 
   async function podPlay(it, at) {
@@ -1525,6 +1525,8 @@
     podStop();
     stopPlayer();
     Pod.item = it;
+    Pod.wantPlay = true;
+    Pod.resumes = 0;
     Pod.dur = it.ytDur || it.dur || 0;
     const start = at != null ? at : !it.watched && it.pos > 5 && (!Pod.dur || it.pos < Pod.dur - 10) ? it.pos : 0;
     Pod.time = start;
@@ -1616,8 +1618,13 @@
     if (d.event === "initialDelivery" && Pod.rate !== 1) ytCommand("setPlaybackRate", [Pod.rate]);
     const info = d.info || {};
     if (typeof info.playerState === "number") {
-      if (info.playerState === 1) Pod.playing = true;
-      if (info.playerState === 2) { Pod.playing = false; podTick(Pod.time, Pod.dur, true); }
+      if (info.playerState === 1) { Pod.playing = true; Pod.resumes = 0; }
+      if (info.playerState === 2) {
+        // In the Android app, YouTube may pause on its own when Reader goes to the background: if you didn't
+        // pause it (bar, notification or headphones), carry on (a few tries, so a real stop isn't fought forever)
+        if (window.ReaderApp && Pod.wantPlay && Pod.resumes < 5) { Pod.resumes++; setTimeout(() => ytCommand("playVideo"), 300); return; }
+        Pod.playing = false; podTick(Pod.time, Pod.dur, true);
+      }
       if (info.playerState === 0) return podEnded();
       podUi();
     }
@@ -1642,6 +1649,7 @@
     it.pos = 0;
     saveItems([it]);
     Pod.playing = false;
+    Pod.wantPlay = false;
     podUi();
     toast("Finished: " + it.title.slice(0, 60));
     if (S.view === "podcasts") refreshPodRow(it);
@@ -1650,11 +1658,13 @@
 
   function podToggle() {
     if (!Pod.item) return;
+    Pod.wantPlay = !Pod.playing;
     if (Pod.mode === "audio" && Pod.media) { if (Pod.media.paused) Pod.media.play().catch(() => {}); else Pod.media.pause(); }
     else if (Pod.mode === "yt") { ytCommand(Pod.playing ? "pauseVideo" : "playVideo"); Pod.playing = !Pod.playing; podUi(); }
   }
 
   function podSeek(t) {
+    Pod.wantPlay = true;
     t = Math.max(0, Math.min(Pod.dur || t, t));
     if (Pod.mode === "audio" && Pod.media) { Pod.media.currentTime = t; Pod.media.play().catch(() => {}); }
     else if (Pod.mode === "yt") { ytCommand("seekTo", [t, true]); ytCommand("playVideo"); }
@@ -1670,6 +1680,7 @@
     Pod.media = Pod.frame = null;
     Pod.item = null;
     Pod.playing = false;
+    Pod.wantPlay = false;
     $("pb-media").replaceChildren();
     if (it && S.view === "podcasts") refreshPodRow(it);
   }
