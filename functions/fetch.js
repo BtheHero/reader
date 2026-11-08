@@ -50,7 +50,8 @@ async function fetchOne(url) {
     };
     // From European data centres YouTube answers with a cookie-consent page instead of the channel page;
     // this cookie says "consent given (necessary cookies only)" so the reader can find the channel's feed.
-    if (/(^|\.)youtube\.com$/.test(target.hostname)) headers.Cookie = "SOCS=CAI; CONSENT=YES+";
+    // (Only for pages: the feeds themselves don't need it.)
+    if (/(^|\.)youtube\.com$/.test(target.hostname) && !target.pathname.startsWith("/feeds/")) headers.Cookie = "SOCS=CAI; CONSENT=YES+";
     const res = await fetch(target.href, {
       headers,
       redirect: "follow",
