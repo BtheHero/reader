@@ -105,10 +105,14 @@
   const YT_HELP = "YouTube isn't giving its feeds to Reader's server. Add a free YouTube API key (“YouTube API key” at the bottom of the menu) and try again.";
 
   function applyYtKey() { $("ytkey-btn").textContent = "YouTube API key: " + (S.settings.ytKey ? "On" : "Off"); }
-  $("ytkey-btn").onclick = () => {
-    const v = prompt("YouTube Data API key, used to read YouTube channels (YouTube refuses its feeds to Reader's server).\nGet one free at console.cloud.google.com (enable “YouTube Data API v3”, then Credentials → Create API key).\nLeave empty to remove it.", S.settings.ytKey || "");
-    if (v == null) return;
-    S.settings.ytKey = v.trim();
+  $("ytkey-btn").onclick = async () => {
+    const r = await ask({ title: "YouTube API key",
+      text: "Used to read YouTube channels and video lengths (YouTube refuses its feeds to Reader's server).\nGet one free at console.cloud.google.com: enable “YouTube Data API v3”, then Credentials → Create API key.",
+      input: S.settings.ytKey || "", placeholder: "AIza…", ok: "Save", extra: S.settings.ytKey ? "Remove key" : "" });
+    if (r.action === "cancel") return;
+    const v = r.action === "extra" ? "" : r.value;
+    if (v === (S.settings.ytKey || "")) return;
+    S.settings.ytKey = v;
     saveSettings();
     applyYtKey();
     toast(S.settings.ytKey ? "YouTube API key saved. Refreshing YouTube channels…" : "YouTube API key removed");
@@ -643,10 +647,16 @@
   });
   $("groups-cancel").onclick = () => $("groups-dialog").close();
 
-  function renameGroup(g) {
-    const name = prompt("Rename the group “" + g + "”.\nLeave it empty to remove the group (its feeds stay, just ungrouped).", g);
-    if (name == null) return;
-    const to = name.trim();
+  async function renameGroup(g) {
+    const r = await ask({ title: "Rename group", input: g, placeholder: "Group name", ok: "Save", extra: "Remove group" });
+    if (r.action === "cancel") return;
+    let to = r.action === "ok" ? r.value.replace(/\s+/g, " ") : "";
+    if (to === g) return;
+    if (!to) {
+      const sure = await ask({ title: "Remove the group “" + g + "”?", text: "Its feeds stay, just without a group.", ok: "Remove", danger: true });
+      if (sure.action !== "ok") return;
+    }
+    // (Renaming onto an existing group's name merges the two)
     for (const f of groupFeeds(g)) f.group = to;
     if (Array.isArray(S.settings.tabGroups)) S.settings.tabGroups = S.settings.tabGroups.map(x => x === g ? to : x).filter(Boolean);
     if (S.settings.groupSel === g) S.settings.groupSel = to;
@@ -1410,10 +1420,12 @@
   }
 
   function applyInvidious() { $("invidious-btn").textContent = "YouTube fallback: " + (S.settings.invidious ? host(S.settings.invidious) || "on" : "Off"); }
-  $("invidious-btn").onclick = () => {
-    const v = prompt("Address of your own Invidious server, used to play YouTube videos whose uploader doesn't allow playback in other apps (e.g. https://invidious.example.com).\nLeave empty to turn it off.", S.settings.invidious || "");
-    if (v == null) return;
-    const t = v.trim();
+  $("invidious-btn").onclick = async () => {
+    const r = await ask({ title: "YouTube fallback",
+      text: "Address of your own Invidious server. Reader uses it to play YouTube videos whose uploader doesn't allow playback in other apps, and podcasts as audio only.",
+      input: S.settings.invidious || "", placeholder: "https://invidious.example.com", ok: "Save", extra: S.settings.invidious ? "Turn off" : "" });
+    if (r.action === "cancel") return;
+    const t = r.action === "extra" ? "" : r.value;
     if (t && !/^https:\/\/[^\s/]+/i.test(t)) return toast("Use the server's https:// address");
     S.settings.invidious = t.replace(/\/+$/, "");
     saveSettings();
@@ -2023,7 +2035,8 @@
   $("feed-delete").onclick = async () => {
     if (!editing) return;
     const f = editing;
-    if (!confirm("Unsubscribe from " + f.title + "? Its saved articles (including starred ones) will be removed.")) return;
+    const r = await ask({ title: "Unsubscribe from " + f.title + "?", text: "Its saved posts (including starred ones) will be removed.", ok: "Unsubscribe", danger: true });
+    if (r.action !== "ok") return;
     $("feed-dialog").close();
     await removeFeed(f.id);
     toast("Unsubscribed from " + f.title);
@@ -2101,6 +2114,42 @@
     s.hidden = !msg;
     s.textContent = msg || "";
     s.classList.toggle("error", !!isError);
+  }
+
+  // Reader's own question dialog, instead of the browser's prompt() / confirm() boxes.
+  // ask({ title, text, input, placeholder, ok, extra, danger }) → { action: "ok" | "extra" | "cancel", value }
+  function ask(o) {
+    return new Promise((resolve) => {
+      const d = $("ask-dialog"), inp = $("ask-input"), extra = $("ask-extra");
+      $("ask-title").textContent = o.title || "";
+      $("ask-text").textContent = o.text || "";
+      $("ask-text").hidden = !o.text;
+      inp.hidden = o.input == null;
+      inp.value = o.input || "";
+      inp.placeholder = o.placeholder || "";
+      $("ask-ok").textContent = o.ok || "OK";
+      $("ask-ok").classList.toggle("danger-fill", !!o.danger);
+      extra.hidden = !o.extra;
+      extra.textContent = o.extra || "";
+      let done = false;
+      const finish = (action) => {
+        if (done) return;
+        done = true;
+        $("ask-form").removeEventListener("submit", onSubmit);
+        d.removeEventListener("close", onClose);
+        if (d.open) d.close();
+        resolve({ action, value: inp.value.trim() });
+      };
+      const onSubmit = (e) => { e.preventDefault(); finish("ok"); };
+      // (A "closed" notice left over from the previous question arrives while this one is open: ignore it)
+      const onClose = () => { if (!d.open) finish("cancel"); };
+      $("ask-form").addEventListener("submit", onSubmit);
+      d.addEventListener("close", onClose);
+      $("ask-cancel").onclick = () => finish("cancel");
+      extra.onclick = () => finish("extra");
+      d.showModal();
+      if (!inp.hidden) setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    });
   }
 
   let toastTimer = 0;

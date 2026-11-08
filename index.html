@@ -149,6 +149,20 @@
   </form>
 </dialog>
 
+<dialog id="ask-dialog">
+  <form method="dialog" id="ask-form" novalidate>
+    <h2 id="ask-title"></h2>
+    <p id="ask-text"></p>
+    <input type="text" id="ask-input" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="actions">
+      <button type="button" class="btn danger" id="ask-extra" hidden></button>
+      <span class="grow"></span>
+      <button type="button" class="btn" id="ask-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="ask-ok">OK</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="groups-dialog">
   <form method="dialog" id="groups-form">
     <h2>Groups tab</h2>

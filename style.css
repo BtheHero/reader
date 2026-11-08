@@ -463,6 +463,12 @@ body.podding .toast { bottom: calc(110px + env(safe-area-inset-bottom)); }
   .post.pod .podnotes { display: none; }
 }
 
+/* Reader's own question dialog (instead of the browser's) */
+#ask-input { display: block; width: 100%; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); outline: none; margin-top: 4px; }
+#ask-input:focus { border-color: var(--accent); }
+#ask-text { white-space: pre-line; }
+.btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
+
 /* Groups tab: switch groups at the top */
 .gchips { display: flex; gap: 8px; overflow-x: auto; padding: 14px 2px 2px; scrollbar-width: none; }
 .gchips::-webkit-scrollbar { display: none; }
