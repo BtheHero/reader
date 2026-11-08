@@ -666,3 +666,11 @@ html, body { max-width: 100%; overflow-x: hidden; overscroll-behavior-x: none; }
 .post, .post > *:not(.pactions), .quote, .content { min-width: 0; max-width: 100%; }
 .ptitle, .pname, .content, .qtext, .ptext { overflow-wrap: anywhere; }
 .content iframe, .content embed, .content object, .content svg { max-width: 100%; }
+
+/* Phone: "mark all read" is the big button in the tab bar, + (follow a feed) sits in the top bar */
+#add-top { display: none; }
+@media (max-width: 759px) {
+  #add-top { display: inline-grid; }
+  #clear-btn { display: none; }
+  .tabs .fab svg { width: 24px; height: 24px; stroke-width: 2.3; }
+}

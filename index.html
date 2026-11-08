@@ -62,6 +62,7 @@
         <button class="icon" id="search-btn" title="Search (/)" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
         <button class="icon" id="unread-btn" title="Show unread only" aria-label="Show unread only" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5"/></svg></button>
         <button class="icon" id="clear-btn" title="Mark everything here as read and hide it" aria-label="Mark everything here as read and hide it"><svg viewBox="0 0 24 24"><path d="m3 13 4 4L17 7M10 16l1 1L21 7"/></svg></button>
+        <button class="icon" id="add-top" title="Follow a feed" aria-label="Follow a feed"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </header>
       <div class="ptr" id="ptr" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></div>
       <button class="newpill" id="newpill" hidden></button>
@@ -91,7 +92,7 @@
   <nav class="tabs" id="tabs" aria-label="Sections">
     <button data-view="all"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
     <button data-view="groups"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>Groups</span></button>
-    <button class="fab" id="tab-add" aria-label="Follow a feed"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button class="fab" id="tab-clear" aria-label="Mark everything here as read and hide it"><svg viewBox="0 0 24 24"><path d="m3 13 4 4L17 7M10 16l1 1L21 7"/></svg></button>
     <button data-view="podcasts"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4.5" height="6.5" rx="1.8"/><rect x="16" y="14" width="4.5" height="6.5" rx="1.8"/></svg><span>Podcasts</span></button>
     <button id="tab-feeds"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5c.8-3.3 3.4-5 6.5-5s5.7 1.7 6.5 5"/><path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6M18 14.8c1.8.7 3 2.3 3.5 4.7"/></svg><span>Following</span></button>
   </nav>

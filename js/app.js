@@ -2474,6 +2474,7 @@
   function applyScrollRead() { $("scrollread-btn").textContent = "Read on scroll: " + (S.settings.markOnScroll ? "On" : "Off"); }
   $("scrollread-btn").onclick = () => { S.settings.markOnScroll = !S.settings.markOnScroll; saveSettings(); applyScrollRead(); };
   $("clear-btn").onclick = markAllRead;
+  $("add-top").onclick = () => openAddDialog();
   $("unread-btn").onclick = () => { S.settings.unreadOnly = !S.settings.unreadOnly; saveSettings(); renderList(); };
   $("back-btn").onclick = () => { if (history.state && history.state.article) history.back(); else closeArticle(); };
   $("star-btn").onclick = () => { const it = S.items.get(S.current); if (it) setStar(it, !it.star); };
@@ -2490,7 +2491,7 @@
     const b = e.target.closest("button");
     if (!b) return;
     if (b.dataset.view) { if (b.dataset.view === S.view) $("timeline").scrollTo({ top: 0, behavior: "smooth" }); else selectView(b.dataset.view); }
-    else if (b.id === "tab-add") openAddDialog();
+    else if (b.id === "tab-clear") markAllRead();
     else if (b.id === "tab-feeds") openDrawer();
   });
 
