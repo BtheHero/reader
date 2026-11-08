@@ -1687,14 +1687,25 @@
     tellApp();
   }
 
-  // In the Android app: keep it running (with a notification) while an episode plays
-  let toldApp = false;
+  // In the Android app: a media notification (and lock-screen / headphone controls) while the player is open,
+  // which also keeps the app running so the episode plays on with the screen off
+  let toldApp = "";
   function tellApp() {
-    if (!window.ReaderApp || toldApp === Pod.playing) return;
-    toldApp = Pod.playing;
+    const app = window.ReaderApp;
+    if (!app) return;
     const f = Pod.item ? feedById(Pod.item.feedId) : null;
-    try { window.ReaderApp.setPlaying(Pod.playing, Pod.item ? Pod.item.title : "", f ? f.title : ""); } catch (e) { /* older app */ }
+    const state = JSON.stringify([!!Pod.item, Pod.playing, Pod.item ? Pod.item.key : ""]);
+    if (state === toldApp) return;
+    toldApp = state;
+    try {
+      if (app.mediaState) app.mediaState(!!Pod.item, Pod.playing, Pod.item ? Pod.item.title : "", f ? f.title : "");
+      else app.setPlaying(Pod.playing, Pod.item ? Pod.item.title : "", f ? f.title : "");
+    } catch (e) { /* older app */ }
   }
+
+  // The app's notification and headphone buttons
+  window.ReaderPod = { toggle: () => podToggle(), back: () => podSeek(Pod.time - 15), fwd: () => podSeek(Pod.time + 30) };
+
 
   // Lock screen / headphone controls (audio mode)
   function mediaSession(it) {

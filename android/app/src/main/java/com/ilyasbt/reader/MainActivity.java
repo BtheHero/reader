@@ -42,6 +42,7 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 
@@ -62,6 +63,16 @@ public class MainActivity extends ComponentActivity {
     private WebChromeClient.CustomViewCallback fullscreenCallback;
     private boolean askedForNotifications = false;
 
+    // The running screen, so the notification's buttons can reach the page's player
+    private static WeakReference<MainActivity> current = new WeakReference<>(null);
+
+    /** A notification / headphone button: tell Reader's podcast player (window.ReaderPod in app.js) */
+    static void podcast(String command) {
+        MainActivity a = current.get();
+        if (a == null) return;
+        a.runOnUiThread(() -> a.web.evaluateJavascript("window.ReaderPod && window.ReaderPod." + command + "()", null));
+    }
+
     private final ActivityResultLauncher<String[]> pickFile = registerForActivityResult(
             new ActivityResultContracts.OpenDocument(), uri -> {
                 if (fileCallback != null) fileCallback.onReceiveValue(uri != null ? new Uri[]{uri} : null);
@@ -80,7 +91,9 @@ public class MainActivity extends ComponentActivity {
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         root = new FrameLayout(this);
         root.setBackgroundColor(ContextCompat.getColor(this, R.color.bg));
-        web = new WebView(this);
+        current = new WeakReference<>(this);
+        // Keeps telling the page it's visible, so players don't pause with the screen off
+        web = new ReaderWebView(this);
         root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
@@ -228,23 +241,30 @@ public class MainActivity extends ComponentActivity {
             });
         }
 
-        /** Something started or stopped playing: keep the app alive with a notification while it plays */
+        /**
+         * The podcast player changed: open (with the episode, playing or paused) shows the media notification and
+         * keeps Reader running in the background; closed removes it.
+         */
         @JavascriptInterface
-        public void setPlaying(boolean playing, String title, String subtitle) {
+        public void mediaState(boolean active, boolean playing, String title, String subtitle) {
             runOnUiThread(() -> {
                 Intent intent = new Intent(MainActivity.this, PlaybackService.class);
-                if (playing) {
-                    if (Build.VERSION.SDK_INT >= 33 && !askedForNotifications
-                            && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                        askedForNotifications = true;
-                        askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS);
-                    }
-                    intent.putExtra("title", title).putExtra("subtitle", subtitle);
-                    ContextCompat.startForegroundService(MainActivity.this, intent);
-                } else {
-                    stopService(intent);
+                if (!active) { stopService(intent); return; }
+                if (Build.VERSION.SDK_INT >= 33 && !askedForNotifications
+                        && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    askedForNotifications = true;
+                    askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS);
                 }
+                intent.putExtra(PlaybackService.EXTRA_ACTIVE, true).putExtra(PlaybackService.EXTRA_PLAYING, playing)
+                        .putExtra(PlaybackService.EXTRA_TITLE, title).putExtra(PlaybackService.EXTRA_SUBTITLE, subtitle);
+                ContextCompat.startForegroundService(MainActivity.this, intent);
             });
+        }
+
+        /** Older pages: playing = shown, stopped = removed */
+        @JavascriptInterface
+        public void setPlaying(boolean playing, String title, String subtitle) {
+            mediaState(playing, playing, title, subtitle);
         }
     }
 
