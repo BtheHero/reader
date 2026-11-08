@@ -698,6 +698,13 @@
   }
 
   const isVideo = (it) => !!it.video && !it.video.audio;
+  // Short social posts (X, Mastodon…): no real title, the text is the post (its title just repeats its start)
+  function isMicro(it, f, text) {
+    if (f && f.x) return true;
+    text = text != null ? text : Parse.plain(it.html, 600);
+    const lead = (it.title || "").replace(/…$/, "");
+    return !!text && lead.length > 20 && text.startsWith(lead.slice(0, 40));
+  }
   const groupOnlyFeeds = () => new Set(S.feeds.filter(f => f.groupOnly && f.group).map(f => f.id));
   const podFeeds = () => new Map(S.feeds.filter(f => f.podcast).map(f => [f.id, f]));
   // A podcast channel's video long enough to be an episode (lengths come from the YouTube API)
@@ -881,8 +888,7 @@
 
     // Short posts (X, Mastodon…) repeat their text as the title: show the text once
     const text = Parse.plain(it.html, 600);
-    const lead = it.title.replace(/…$/, "");
-    const micro = !!f.x || (!!text && lead.length > 20 && text.startsWith(lead.slice(0, 40)));
+    const micro = isMicro(it, f, text);
     if (micro) {
       const p = el("p", "ptext full");
       p.append(text ? richText(it, f, 600, true) : it.title);
@@ -1153,7 +1159,9 @@
       h.append(a);
     } else h.textContent = it.title;
     const by = el("p", "byline", [it.author, new Date(it.date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })].filter(Boolean).join(" · "));
-    head.append(src, h, by);
+    // A social post's title only repeats its text: show the text once
+    if (isMicro(it, f)) { head.append(src, by); head.classList.add("micro"); }
+    else head.append(src, h, by);
     const content = el("div", "content");
     const clean = Parse.sanitize(it.html, it.link || f.siteUrl);
     content.innerHTML = clean;

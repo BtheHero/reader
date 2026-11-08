@@ -482,3 +482,5 @@ body.podding .toast { bottom: calc(110px + env(safe-area-inset-bottom)); }
 .choices { display: grid; gap: 4px; max-height: 50vh; overflow-y: auto; }
 .choices label.check { margin-top: 6px; }
 @media (max-width: 759px) { .gchips { padding-left: 14px; padding-right: 14px; } }
+.article header.micro { margin-bottom: 14px; }
+.article header.micro .byline { margin-top: 6px; }
