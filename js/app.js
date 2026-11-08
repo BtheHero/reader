@@ -1684,6 +1684,16 @@
     const row = Pod.item && document.querySelector('.post.pod[data-key="' + CSS.escape(Pod.item.key) + '"] .podplay');
     if (row) { row.textContent = Pod.playing ? "❚❚" : "▶"; row.setAttribute("aria-label", Pod.playing ? "Pause" : "Play"); }
     if ("mediaSession" in navigator) navigator.mediaSession.playbackState = Pod.playing ? "playing" : "paused";
+    tellApp();
+  }
+
+  // In the Android app: keep it running (with a notification) while an episode plays
+  let toldApp = false;
+  function tellApp() {
+    if (!window.ReaderApp || toldApp === Pod.playing) return;
+    toldApp = Pod.playing;
+    const f = Pod.item ? feedById(Pod.item.feedId) : null;
+    try { window.ReaderApp.setPlaying(Pod.playing, Pod.item ? Pod.item.title : "", f ? f.title : ""); } catch (e) { /* older app */ }
   }
 
   // Lock screen / headphone controls (audio mode)
@@ -1709,7 +1719,7 @@
     if (Pod.mode === "yt") ytCommand("setPlaybackRate", [Pod.rate]);
     podUi();
   };
-  $("pb-close").onclick = () => { podStop(); $("podbar").hidden = true; document.body.classList.remove("podding"); };
+  $("pb-close").onclick = () => { podStop(); podUi(); $("podbar").hidden = true; document.body.classList.remove("podding"); };
   $("pb-title").onclick = () => { if (Pod.item) openArticle(Pod.item.key); };
   $("pb-seek").addEventListener("input", () => { podDragging = true; if (Pod.dur) $("pb-time").textContent = hms($("pb-seek").value / 1000 * Pod.dur); });
   $("pb-seek").addEventListener("change", () => { podDragging = false; if (Pod.dur) podSeek($("pb-seek").value / 1000 * Pod.dur); });
@@ -1944,6 +1954,8 @@
 
   $("export-btn").onclick = () => {
     if (!S.feeds.length) return toast("No feeds to export yet");
+    // In the Android app, the app saves it to Downloads (its web view can't download files itself)
+    if (window.ReaderApp) return window.ReaderApp.saveFile("reader-subscriptions.opml", "text/x-opml", Parse.buildOpml(S.feeds));
     const blob = new Blob([Parse.buildOpml(S.feeds)], { type: "text/x-opml" });
     const a = el("a");
     a.href = URL.createObjectURL(blob);

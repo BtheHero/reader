@@ -166,3 +166,20 @@ Same code, and updates to the site reach the app without a new Play Store releas
 3. Publish the generated `/.well-known/assetlinks.json` on the domain (proves you own the site, hides the browser bar).
 4. Upload the signed `.aab` in the Play Console (one-time $25 developer fee; needs a privacy policy URL —
    "everything stays on your device" makes that short).
+
+## Android app (android/)
+
+A small native app (Kotlin) that shows the live site in a full-screen WebView, so site updates reach it without
+a new build, and adds what a website can't do:
+
+- **Ad blocking**: every request from the page and from the embedded YouTube / X players is checked against a list
+  of ad and tracking servers (`AdBlock.kt`) and dropped. YouTube mixes some ads into the video stream itself, so a
+  few can still get through. (Google Play forbids blocking other services' ads: this build is for installing
+  yourself.)
+- Links to other sites open in their app (YouTube, X…) or the browser; Back closes what's open in Reader.
+- OPML import (file picker) and export (saved to Downloads), fullscreen video.
+- Podcasts keep playing with the screen off: while something plays, a notification keeps the app running.
+
+Built by GitHub Actions (`.github/workflows/android.yml`) on every change under `android/`, and published at
+**https://github.com/ilyasbt/reader/releases/tag/app-latest** → `Reader.apk`. Signing uses the repository secrets
+`ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD`, so each build installs over the previous one.
