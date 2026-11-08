@@ -39,8 +39,9 @@
 
   // ---------- Saving ----------
 
-  const saveFeeds = () => Store.set("feeds", S.feeds);
-  const saveSettings = () => Store.set("settings", S.settings);
+  // Saved on this device, and mirrored to the account when signed in (account.js)
+  const saveFeeds = () => { Account.changed("feeds"); return Store.set("feeds", S.feeds); };
+  const saveSettings = () => { Account.changed("settings"); return Store.set("settings", S.settings); };
   const saveItems = (list) => Store.putItems(list.map(it => ({ ...it })));
 
   // ---------- Fetching ----------
@@ -129,7 +130,7 @@
       if (old && old.video && p.video && old.video.id === p.video.id && old.video.src) p.video = { ...p.video, src: old.video.src, gif: old.video.gif };
       if (old && old.video && p.video && old.video.id === p.video.id && old.video.ytOnly) p.video = { ...p.video, ytOnly: true };
       const it = { key, feedId: feed.id, id: p.id, title: p.title, link: p.link, date, author: p.author, html: p.html, image: p.image, video: p.video || null,
-        read: old ? old.read : false, star: old ? old.star : false, seen: old ? old.seen : now,
+        read: old ? old.read : false, readAt: old ? old.readAt || 0 : 0, star: old ? old.star : false, seen: old ? old.seen : now,
         pos: old ? old.pos || 0 : 0, dur: old ? old.dur || 0 : 0, watched: old ? !!old.watched : false };
       if (!old) added++;
       if (!old || old.title !== it.title || old.html !== it.html || old.date !== it.date || old.image !== it.image || JSON.stringify(old.video || null) !== JSON.stringify(it.video)) {
@@ -138,6 +139,8 @@
     });
     saveItems(changed);
     prune(feed.id);
+    // Posts read on another device show as read here too
+    if (added) Account.itemsAdded(feed.id);
     return added;
   }
 
@@ -371,8 +374,10 @@
   function setRead(it, read) {
     if (!it || it.read === read) return;
     it.read = read;
+    it.readAt = Date.now();
     if (read) S.keep.add(it.key);
     saveItems([it]);
+    Account.itemChanged(it, "read");
     const row = document.querySelector('.post[data-key="' + CSS.escape(it.key) + '"]');
     if (row) {
       row.classList.toggle("unread", !read);
@@ -387,6 +392,7 @@
     if (!it) return;
     it.star = star;
     saveItems([it]);
+    Account.itemChanged(it, "star");
     const row = document.querySelector('.post[data-key="' + CSS.escape(it.key) + '"]');
     if (row) {
       row.classList.toggle("starred", star);
@@ -400,12 +406,12 @@
   function markAllRead() {
     const list = S.shown.map(k => S.items.get(k)).filter(i => i && !i.read);
     if (!list.length) return toast("Nothing unread here");
-    list.forEach(i => { i.read = true; });
+    list.forEach(i => { i.read = true; i.readAt = Date.now(); Account.itemChanged(i, "read"); });
     saveItems(list);
     renderFeeds();
     renderList(true);
     toast("Marked " + list.length + " as read", "Undo", () => {
-      list.forEach(i => { i.read = false; });
+      list.forEach(i => { i.read = false; i.readAt = Date.now(); Account.itemChanged(i, "read"); });
       saveItems(list);
       renderFeeds();
       renderList(true);
@@ -1828,6 +1834,75 @@
     }
   }
 
+  // What the account / sync module (account.js) can see and change
+  const accountApi = {
+    getFeeds: () => S.feeds,
+    getSettings: () => S.settings,
+    getItems: () => S.items,
+    async setFeeds(list, removedIds) {
+      for (const id of removedIds || []) {
+        const keys = [...S.items.values()].filter(i => i.feedId === id).map(i => i.key);
+        keys.forEach(k => S.items.delete(k));
+        await Store.deleteItems(keys);
+        if (S.view === "feed:" + id) S.view = "all";
+      }
+      S.feeds = list.sort((a, b) => a.title.localeCompare(b.title));
+      await saveFeeds();
+      renderFeeds();
+      renderList(true);
+    },
+    async setSettings(s) {
+      S.settings = s;
+      await saveSettings();
+      applyTheme(); applyShorts(); applyScrollRead(); applyInvidious(); applyYtKey();
+      renderCounts();
+      renderList(true);
+    },
+    // A feed already in the account under another id: move this device's posts over to that id
+    async remapFeed(oldId, newId) {
+      const f = feedById(oldId);
+      if (!f) return;
+      const moved = [], oldKeys = [];
+      for (const it of [...S.items.values()]) {
+        if (it.feedId !== oldId) continue;
+        oldKeys.push(it.key);
+        S.items.delete(it.key);
+        const n = { ...it, feedId: newId, key: newId + "|" + (it.id || it.link) };
+        S.items.set(n.key, n);
+        moved.push(n);
+      }
+      f.id = newId;
+      if (S.view === "feed:" + oldId) S.view = "feed:" + newId;
+      await Store.deleteItems(oldKeys);
+      await saveItems(moved);
+    },
+    // A star added or removed on another device
+    applyStar(key, star, data) {
+      let it = S.items.get(key);
+      if (!it && star && data) {
+        it = { ...data, read: true, readAt: 0, star: true, seen: Date.now(), pos: 0, dur: 0, watched: false };
+        delete it.starredAt;
+        S.items.set(key, it);
+        saveItems([it]);
+        if (S.view === "starred") renderList(true);
+        renderCounts();
+        return;
+      }
+      if (it && it.star !== star) { setStar(it, star); if (S.view === "starred") renderList(true); }
+    },
+    // Read marks from another device
+    itemsUpdated(list) {
+      saveItems(list);
+      for (const it of list) {
+        const row = document.querySelector('.post[data-key="' + CSS.escape(it.key) + '"]');
+        if (row) row.classList.toggle("unread", !it.read);
+      }
+      renderFeeds();
+    },
+    refresh: (feeds) => refresh(feeds, { quiet: true }),
+    toast, el, closeDrawer
+  };
+
   async function start() {
     try {
       const [feeds, settings, items] = await Promise.all([Store.get("feeds"), Store.get("settings"), Store.allItems()]);
@@ -1848,6 +1923,7 @@
     renderFeeds();
     renderList();
     refreshStale();
+    Account.init(accountApi);
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
   }
   start();

@@ -38,6 +38,31 @@ the timeline. On phones there's a bottom tab bar (Home, Videos, follow +, Starre
 - **Groups**: give a feed a group in the Follow or Edit dialog. Groups appear in the sidebar (fold open/closed, unread
   count, ⋯ to rename or remove) and each has its own timeline. OPML export / import keeps groups as folders.
 
+## Accounts and sync (optional)
+
+Signed out, Reader keeps everything on the device, as always. With a Firebase project set in `js/config.js`,
+an account button appears: sign in with email and password and your feeds, groups, filters, settings, starred
+posts and read posts stay the same on every device (live, through Cloud Firestore). Signing in on a device that
+already has feeds merges them into the account (same address = same feed). Sign out keeps the device's copy;
+"Delete account" removes the account and its synced data.
+
+Firestore layout: `users/{uid}` holds `feedMap` and `settings` (each feed and setting is its own field, so
+changes from two devices at once don't undo each other), `users/{uid}/stars/*` the starred posts, and
+`users/{uid}/reads/{feedId}` each feed's read marks (newest change wins). Security rules (Firestore → Rules):
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
+```
+
+The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in.
+
 ## How it works
 
 - **Subscriptions, articles, read/starred state and settings** are stored in the browser (IndexedDB).

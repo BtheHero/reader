@@ -388,3 +388,21 @@ label.check input { width: 18px; height: 18px; accent-color: var(--accent); marg
 .ytmsg b { display: block; font-size: 17px; margin-bottom: 4px; }
 .ytmsg p { margin: 0 0 14px; color: #ddd; }
 .pmedia .badge.yt { background: #c00; }
+
+/* Account */
+.account { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; margin: 0 0 10px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); text-align: left; }
+.account:hover { border-color: var(--faint); }
+.account svg { width: 26px; height: 26px; color: var(--muted); }
+.account.signed-in svg { color: var(--accent); }
+.account.problem .acc-sub { color: var(--danger); }
+.acc-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.acc-label { font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-sub { font-size: 12.5px; color: var(--muted); }
+#account-dialog form { position: relative; }
+.acc-x { position: absolute; top: -8px; right: -8px; }
+#acc-body h2 { padding-right: 36px; }
+#acc-body input { display: block; width: 100%; padding: 11px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); outline: none; margin-top: 6px; }
+#acc-body input:focus { border-color: var(--accent); }
+.acc-links { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.acc-links .link { color: var(--accent); font-size: 13.5px; }
+.acc-state { color: var(--text) !important; }
