@@ -2548,6 +2548,8 @@
       S.settings = { ...S.settings, ...(settings || {}) };
       // Settings saved before "read posts leave on refresh" existed: turn the new behaviour on once
       if ((S.settings.v || 0) < 2) { S.settings.unreadOnly = true; S.settings.markOnScroll = true; S.settings.v = 2; saveSettings(); }
+      // Once: re-read X accounts, so posts saved before quotes were understood get their quote (and its video)
+      if ((S.settings.v || 0) < 3) { S.settings.v = 3; saveSettings(); for (const f of feeds || []) if (f.x) f.lastFetch = 0; }
       for (const it of items) S.items.set(it.key, it);
       for (const [k, v] of Object.entries((await Store.get("xprofiles")) || {})) XP.set(k, v);
       upgradeSaved();

@@ -325,8 +325,14 @@ const Parse = (() => {
         };
         it.html = it.html.slice(0, q.index);
         // The quote's picture or video belongs to the quote
+        const savedImage = it.image;
         it.image = firstImage(it.html, it.link);
-        if (it.video && it.video.kind === "x" && !/(Video|Gif)\s*(<br>\s*)?<img|amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb/i.test(it.html)) delete it.video;
+        if (it.video && it.video.kind === "x" && !/(Video|Gif)\s*(<br>\s*)?<img|amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb/i.test(it.html)) {
+          // Saved by an older Reader, which took the quote's video for the post's own (and dropped it from the
+          // quote): give it back to the quote, with its thumbnail
+          delete it.video;
+          if (!it.quote.video && !it.quote.image) { it.quote.video = true; it.quote.image = savedImage || ""; }
+        }
       }
       it.id = "x:" + m[2];
       it.link = "https://x.com/" + m[1] + "/status/" + m[2];
