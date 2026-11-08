@@ -193,6 +193,9 @@
       }
       saveFeeds();
       status("");
+      // Only posts that will actually show here count as new: not ones hidden by filters, blocks, hidden
+      // Shorts, other views, or feeds kept to their group
+      if (added) { const shown = new Set(viewItems().map(i => i.key)); added = [...S.newKeys].filter(k => shown.has(k)).length; }
       const failNote = failed ? " · " + failed + " feed" + (failed === 1 ? "" : "s") + " failed" : "";
       if (S.view === "podcasts" && !quiet) {
         // Count new episodes only (videos over the channel's minimum length), once their lengths are known
