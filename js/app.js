@@ -890,7 +890,8 @@
     } else {
       li.append(el("h3", "ptitle", it.title));
       const snip = Parse.plain(it.html, 280);
-      if (snip && snip !== it.title && !isVideo(it)) { const p = el("p", "ptext"); p.append(richText(it, f, 280, false)); li.append(p); }
+      // The text under a post's title only when previews are on (off by default); opening the post shows it all
+      if (S.settings.previews && snip && snip !== it.title && !isVideo(it)) { const p = el("p", "ptext"); p.append(richText(it, f, 280, false)); li.append(p); }
     }
 
     const pics = it.video ? [] : gallery(it);
@@ -2270,6 +2271,9 @@
     }
   }, { root: $("timeline"), threshold: 0 });
 
+  function applyPreviews() { $("previews-btn").textContent = "Previews: " + (S.settings.previews ? "On" : "Off"); }
+  $("previews-btn").onclick = () => { S.settings.previews = !S.settings.previews; saveSettings(); applyPreviews(); renderList(true); };
+
   function applyScrollRead() { $("scrollread-btn").textContent = "Read on scroll: " + (S.settings.markOnScroll ? "On" : "Off"); }
   $("scrollread-btn").onclick = () => { S.settings.markOnScroll = !S.settings.markOnScroll; saveSettings(); applyScrollRead(); };
   $("clear-btn").onclick = markAllRead;
@@ -2360,7 +2364,7 @@
     async setSettings(s) {
       S.settings = s;
       await saveSettings();
-      applyTheme(); applyShorts(); applyScrollRead(); applyInvidious(); applyYtKey();
+      applyTheme(); applyShorts(); applyScrollRead(); applyPreviews(); applyInvidious(); applyYtKey();
       renderCounts();
       renderList(true);
     },
@@ -2424,6 +2428,7 @@
     applyTheme();
     applyShorts();
     applyScrollRead();
+    applyPreviews();
     applyInvidious();
     applyYtKey();
     renderFeeds();
