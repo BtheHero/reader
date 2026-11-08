@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src * data: blob:; media-src *; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Reader</title>
+<meta name="description" content="A simple, private RSS and Atom feed reader.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16171a" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <aside class="side" id="side" aria-label="Navigation">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="30" height="30">
+      <span>Reader</span>
+    </div>
+    <nav class="views">
+      <button class="nav" data-view="all"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg><span>Home</span><b class="count" id="count-all"></b></button>
+      <button class="nav" data-view="videos"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/></svg><span>Videos</span><b class="count" id="count-videos"></b></button>
+      <button class="nav" data-view="starred"><svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg><span>Starred</span><b class="count" id="count-starred"></b></button>
+    </nav>
+    <button class="btn primary compose" id="add-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Follow a feed</span></button>
+    <div class="sidehead"><h2>Following</h2></div>
+    <ul class="feeds" id="feeds"></ul>
+    <div class="sidefoot">
+      <button class="link" id="import-btn">Import OPML</button>
+      <button class="link" id="export-btn">Export OPML</button>
+      <button class="link" id="theme-btn">Theme: System</button>
+      <button class="link" id="shorts-btn">Shorts: Shown</button>
+      <button class="link" id="scrollread-btn">Read on scroll: On</button>
+      <button class="link" id="invidious-btn">YouTube fallback: Off</button>
+      <input type="file" id="import-file" accept=".opml,.xml,text/xml,application/xml" hidden>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <main class="main" id="main">
+    <section class="list" id="list" aria-label="Timeline">
+      <header class="bar">
+        <button class="icon menu" id="menu-btn" aria-label="Show feeds"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <h1 id="view-title">Home</h1>
+        <button class="icon" id="search-btn" title="Search (/)" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
+        <button class="icon" id="unread-btn" title="Show unread only" aria-label="Show unread only" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5"/></svg></button>
+        <button class="icon" id="markall-btn" title="Mark all as read" aria-label="Mark all as read"><svg viewBox="0 0 24 24"><path d="m3 13 4 4L17 7M10 16l1 1L21 7"/></svg></button>
+        <button class="icon" id="refresh-btn" title="Refresh (r)" aria-label="Refresh"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
+      </header>
+      <div class="ptr" id="ptr" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></div>
+      <button class="newpill" id="newpill" hidden></button>
+      <div class="timeline" id="timeline">
+        <div class="search" id="search-box" hidden><input type="search" id="search" placeholder="Search posts" aria-label="Search posts"></div>
+        <div class="top" id="top"></div>
+        <div class="status" id="status" hidden></div>
+        <ul class="items" id="items"></ul>
+        <div class="empty" id="empty" hidden></div>
+      </div>
+    </section>
+
+    <article class="reader" id="reader" aria-label="Post">
+      <header class="bar">
+        <button class="icon back" id="back-btn" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg></button>
+        <span class="grow"></span>
+        <button class="icon" id="star-btn" title="Star (s)" aria-label="Star" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg></button>
+        <button class="icon" id="read-btn" title="Mark unread (m)" aria-label="Mark unread"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg></button>
+        <a class="icon" id="open-btn" title="Open original (o)" aria-label="Open original" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></a>
+      </header>
+      <div class="scroll" id="reader-scroll">
+        <div class="article" id="article"></div>
+      </div>
+    </article>
+  </main>
+
+  <nav class="tabs" id="tabs" aria-label="Sections">
+    <button data-view="all"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
+    <button data-view="videos"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="m10 9 5 3-5 3z"/></svg><span>Videos</span></button>
+    <button class="fab" id="tab-add" aria-label="Follow a feed"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+    <button data-view="starred"><svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg><span>Starred</span></button>
+    <button id="tab-feeds"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5c.8-3.3 3.4-5 6.5-5s5.7 1.7 6.5 5"/><path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6M18 14.8c1.8.7 3 2.3 3.5 4.7"/></svg><span>Following</span></button>
+  </nav>
+</div>
+
+<dialog id="add-dialog">
+  <form method="dialog" id="add-form">
+    <h2>Follow a feed</h2>
+    <p>Paste a feed address, a website's address, a YouTube channel or playlist, or an X (Twitter) profile. Reader finds the feed.</p>
+    <input type="text" id="add-url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="example.com, a YouTube channel, x.com/name…" required>
+    <p class="error" id="add-error" role="status" hidden></p>
+    <ul class="results" id="add-results" hidden></ul>
+    <label>Group <span class="opt">(optional)</span> <input type="text" id="add-group" list="group-names" autocomplete="off" placeholder="No group"></label>
+    <div class="actions">
+      <button type="button" class="btn" value="cancel" id="add-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="add-submit">Follow</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="feed-dialog">
+  <form method="dialog" id="feed-form">
+    <h2>Edit feed</h2>
+    <label>Name <input type="text" id="feed-name" autocomplete="off"></label>
+    <label>Address <input type="text" id="feed-url" readonly></label>
+    <label>Group <input type="text" id="feed-group" list="group-names" autocomplete="off" placeholder="No group (type a name to create one)"></label>
+    <fieldset class="filters">
+      <legend>Filters</legend>
+      <label>Hide posts containing <input type="text" id="flt-mute" autocomplete="off" placeholder="words, separated by commas"></label>
+      <label>Only show posts containing <input type="text" id="flt-only" autocomplete="off" placeholder="words, separated by commas"></label>
+      <label class="check"><input type="checkbox" id="flt-media"> Only posts with pictures or video</label>
+      <div id="flt-x">
+        <label class="check"><input type="checkbox" id="flt-reposts"> Hide reposts</label>
+        <label class="check"><input type="checkbox" id="flt-replies"> Hide replies</label>
+      </div>
+    </fieldset>
+    <p class="error" id="feed-error" hidden></p>
+    <div class="actions">
+      <button type="button" class="btn danger" id="feed-delete">Unsubscribe</button>
+      <span class="grow"></span>
+      <button type="button" class="btn" id="feed-cancel">Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<datalist id="group-names"></datalist>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-label="Picture viewer" hidden>
+  <button class="lb-btn lb-close" id="lb-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  <button class="lb-btn lb-prev" id="lb-prev" aria-label="Previous picture"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg></button>
+  <img id="lb-img" alt="" referrerpolicy="no-referrer">
+  <button class="lb-btn lb-next" id="lb-next" aria-label="Next picture"><svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg></button>
+  <span class="lb-count" id="lb-count"></span>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="js/parse.js"></script>
+<script src="js/store.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

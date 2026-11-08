@@ -1,0 +1,1796 @@
+// Reader: the app. State lives in memory and is saved to IndexedDB (store.js) as it changes.
+
+(() => {
+  // Where feeds are fetched from: "fetch" next to this page (reader/functions/fetch.js), so the same files
+  // work at the root of Reader's own site and at /reader/ on another one. A packaged app served from
+  // another origin would set the full https:// address here.
+  const API_URL = new URL("fetch", document.baseURI).href;
+  const BATCH = 45;                 // feeds per call; matches MAX_URLS in the function
+  const STALE_MIN = 30;             // opening the reader refreshes feeds older than this
+  const KEEP_PER_FEED = 300;        // older articles beyond this are dropped (starred ones are kept)
+  const PAGE = 60;                  // articles rendered at a time in the list
+  // X / Twitter accounts are read through Nitter servers. d420.net keeps a live list of them (it allows
+  // browsers to read it directly). Only servers whose operators allow automated use are used, best first;
+  // this list is also the fallback when d420.net can't be reached.
+  const NITTER_STATUS = "https://d420.net/api/v1/instances";
+  const NITTER_ALLOWED = ["xitter.cf", "nitter.gq", "xitter.gq", "teapawt.net", "teapaw.org", "teapawt.org", "nitter.cf"];
+
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+  const S = {
+    feeds: [],               // [{ id, url, title, siteUrl, added, lastFetch, error }]
+    items: new Map(),        // key -> { key, feedId, id, title, link, date, author, html, image, video, read, star, seen, pos, dur, watched }
+    settings: { theme: "system", unreadOnly: true, hideShorts: false, markOnScroll: true },
+    keep: new Set(),         // posts read since the last refresh / launch: they stay in view until then
+    view: "all",             // "all" | "videos" | "starred" | "feed:<id>"
+    query: "",
+    current: null,           // key of the open article
+    shown: [],               // keys in the list, in order
+    rendered: 0,
+    refreshing: false
+  };
+
+  const narrow = () => matchMedia("(max-width: 759px)").matches;
+  const medium = () => matchMedia("(max-width: 1099px)").matches;
+  const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+  const feedById = (id) => S.feeds.find(f => f.id === id);
+  const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return ""; } };
+
+  // ---------- Saving ----------
+
+  const saveFeeds = () => Store.set("feeds", S.feeds);
+  const saveSettings = () => Store.set("settings", S.settings);
+  const saveItems = (list) => Store.putItems(list.map(it => ({ ...it })));
+
+  // ---------- Fetching ----------
+
+  async function fetchBatch(urls) {
+    const out = [];
+    for (let i = 0; i < urls.length; i += BATCH) {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls: urls.slice(i, i + BATCH) })
+      });
+      if (!res.ok) throw new Error(res.status === 404 ? "The feed fetcher isn't available here (it runs on Cloudflare Pages)." : "The feed fetcher answered " + res.status);
+      out.push(...(await res.json()).results);
+    }
+    return out;
+  }
+
+  // Merge freshly parsed articles into a feed. Returns how many are new.
+  function merge(feed, parsed) {
+    const now = Date.now(), changed = [];
+    let added = 0;
+    parsed.items.forEach((p, i) => {
+      if (!p.id && !p.link) return;
+      const key = feed.id + "|" + (p.id || p.link);
+      const old = S.items.get(key);
+      // No date in the feed: keep the first time we saw it, ordered as the feed lists them
+      const date = p.date || (old && old.date) || now - i * 1000;
+      // Keep an X video's file address found earlier (the feed doesn't carry it)
+      if (old && old.video && p.video && old.video.id === p.video.id && old.video.src) p.video = { ...p.video, src: old.video.src, gif: old.video.gif };
+      if (old && old.video && p.video && old.video.id === p.video.id && old.video.ytOnly) p.video = { ...p.video, ytOnly: true };
+      const it = { key, feedId: feed.id, id: p.id, title: p.title, link: p.link, date, author: p.author, html: p.html, image: p.image, video: p.video || null,
+        read: old ? old.read : false, star: old ? old.star : false, seen: old ? old.seen : now,
+        pos: old ? old.pos || 0 : 0, dur: old ? old.dur || 0 : 0, watched: old ? !!old.watched : false };
+      if (!old) added++;
+      if (!old || old.title !== it.title || old.html !== it.html || old.date !== it.date || old.image !== it.image || JSON.stringify(old.video || null) !== JSON.stringify(it.video)) {
+        S.items.set(key, it); changed.push(it);
+      }
+    });
+    saveItems(changed);
+    prune(feed.id);
+    return added;
+  }
+
+  function prune(feedId) {
+    const list = [...S.items.values()].filter(i => i.feedId === feedId).sort((a, b) => b.date - a.date);
+    const drop = list.slice(KEEP_PER_FEED).filter(i => !i.star).map(i => i.key);
+    drop.forEach(k => S.items.delete(k));
+    Store.deleteItems(drop);
+  }
+
+  async function refresh(feeds, { quiet } = {}) {
+    if (S.refreshing || !feeds.length) return;
+    S.refreshing = true;
+    $("refresh-btn").classList.add("spin");
+    if (!quiet) status("Refreshing " + feeds.length + (feeds.length === 1 ? " feed…" : " feeds…"));
+    let added = 0, failed = 0;
+    try {
+      const results = await fetchBatch(feeds.map(f => f.url));
+      results.forEach((r, i) => {
+        const f = feeds[i];
+        f.lastFetch = Date.now();
+        const parsed = r.ok ? Parse.parseFeed(r.body, r.finalUrl || f.url) : null;
+        if (!parsed) { f.error = r.ok ? "This address no longer returns a feed" : r.error; failed++; return; }
+        added += apply(f, parsed);
+      });
+      // X accounts whose Nitter server failed: move them to another working server
+      const xFailed = feeds.filter(f => f.x && f.error);
+      if (xFailed.length) {
+        const hosts = await nitterHosts();
+        const tries = [];
+        for (const f of xFailed) {
+          const current = host(f.url);
+          for (const h of hosts.filter(h => h !== current).slice(0, 3)) tries.push({ f, url: "https://" + h + "/" + f.x + "/rss" });
+        }
+        const res = await fetchBatch(tries.map(t => t.url));
+        res.forEach((r, i) => {
+          const { f, url } = tries[i];
+          if (!f.error) return;   // an earlier server already worked
+          const parsed = r.ok && Parse.parseFeed(r.body, url);
+          if (!parsed) return;
+          f.url = url;
+          added += apply(f, parsed);
+          failed--;
+        });
+      }
+      saveFeeds();
+      status("");
+      if (!quiet || added) toast(added ? added + " new article" + (added === 1 ? "" : "s") : "No new articles" + (failed ? " · " + failed + " feed" + (failed === 1 ? "" : "s") + " failed" : ""));
+    } catch (e) {
+      status(navigator.onLine === false ? "You're offline. Showing saved articles." : e.message, true);
+    } finally {
+      S.refreshing = false;
+      $("refresh-btn").classList.remove("spin");
+      endPull();
+      renderFeeds();
+      if (!quiet) { S.keep.clear(); hideNewPill(); renderList(); }
+      else if ($("timeline").scrollTop > 80 && !document.body.classList.contains("reading")) { if (added) showNewPill(added); }
+      else renderList(true);
+    }
+  }
+
+  // "N new posts" after a background refresh while you're scrolled down: tap to go to the top and see them
+  let pending = 0;
+  function showNewPill(n) {
+    pending += n;
+    $("newpill").textContent = "↑ " + pending + " new post" + (pending === 1 ? "" : "s");
+    $("newpill").hidden = false;
+  }
+  function hideNewPill() { pending = 0; $("newpill").hidden = true; }
+  $("newpill").onclick = () => { hideNewPill(); S.keep.clear(); renderList(); $("timeline").scrollTop = 0; };
+
+  // Site-specific clean-up of a freshly parsed feed
+  function tidy(parsed, url) {
+    if (parsed && Parse.isReddit(url)) Parse.redditify(parsed);
+    return parsed;
+  }
+
+  function apply(f, parsed) {
+    if (f.x) Parse.xify(parsed, f.x);
+    tidy(parsed, f.url);
+    f.error = "";
+    if (!f.customTitle && parsed.title) f.title = parsed.title;
+    if (parsed.siteUrl) f.siteUrl = parsed.siteUrl;
+    if (parsed.icon) f.icon = parsed.icon;
+    return merge(f, parsed);
+  }
+
+  // Working Nitter servers, best first (checked at most once an hour)
+  let nitterCache = null;
+  // Healthy ones come first; the others follow, since the status page can lag behind a server coming back.
+  async function nitterHosts() {
+    if (nitterCache && Date.now() - nitterCache.at < 3600000) return nitterCache.hosts;
+    let live = [], known = [];
+    try {
+      const d = await (await fetch(NITTER_STATUS)).json();
+      known = d.hosts.map(h => h.domain);
+      live = d.hosts.filter(h => h.healthy && h.rss && !h.is_bad_host && !h.unreliable && NITTER_ALLOWED.includes(h.domain))
+        .sort((a, b) => (b.community_funded - a.community_funded) || (b.healthy_percentage_overall - a.healthy_percentage_overall) || (a.ping_avg - b.ping_avg))
+        .map(h => h.domain);
+    } catch (e) { /* use the built-in list */ }
+    const hosts = [...new Set([...live, ...NITTER_ALLOWED])];
+    // Retry the status page sooner when it couldn't be read
+    nitterCache = { at: live.length ? Date.now() : Date.now() - 3300000, hosts, known: [...new Set([...known, ...NITTER_ALLOWED])] };
+    return hosts;
+  }
+
+  // A link to an account on a Nitter server (xitter.gq/xbox): treat it as that X account, so it can move servers
+  async function nitterUser(url) {
+    let u;
+    try { u = new URL(url); } catch (e) { return ""; }
+    if (!NITTER_ALLOWED.includes(u.hostname)) {
+      await nitterHosts();
+      if (!nitterCache.known.includes(u.hostname)) return "";
+    }
+    return Parse.xUser("https://x.com" + u.pathname);
+  }
+
+  const refreshStale = () => refresh(S.feeds.filter(f => !f.lastFetch || Date.now() - f.lastFetch > STALE_MIN * 60000), { quiet: true });
+
+  // Turn whatever the person typed into working feeds: the address itself, the feeds the page links to,
+  // or feeds at the usual places (/feed, /rss, /atom.xml…). At most two calls to the fetcher.
+  // Results are remembered, so typing, then pressing Add, doesn't look the same address up twice.
+  const lookups = new Map();
+
+  function normalize(input) {
+    let url = input.trim();
+    if (!url) return "";
+    const reddit = Parse.redditFeed(url);
+    if (reddit) return reddit;
+    if (!/^https?:\/\//i.test(url)) url = "https://" + url.replace(/^\/+/, "");
+    try { url = new URL(url).href; } catch (e) { return ""; }
+    return Parse.youtubeFeed(url) || url;
+  }
+
+  // Worth looking up while typing: something.tld with no spaces
+  const looksLikeAddress = (input) => /^\/?(r|u|user)\/[\w-]{2,}\/?$/i.test(input.trim()) || /^(https?:\/\/)?[^\s/.]+(\.[^\s/.]+)*\.[a-z]{2,}(:\d+)?(\/\S*)?$/i.test(input.trim()) || /^https?:\/\/\S+$/i.test(input.trim());
+
+  function findFeeds(input) {
+    const url = normalize(input);
+    if (!url) return Promise.reject(new Error("That doesn't look like a web address."));
+    if (!lookups.has(url)) {
+      const p = lookup(url);
+      lookups.set(url, p);
+      p.catch(() => lookups.delete(url));   // let a failed lookup (offline…) be retried
+    }
+    return lookups.get(url);
+  }
+
+  async function lookup(url) {
+    const user = Parse.xUser(url) || await nitterUser(url);
+    if (user) return lookupX(user);
+    const [r] = await fetchBatch([url]);
+    const base = (r && r.finalUrl) || url;
+    const direct = r && r.ok && tidy(Parse.parseFeed(r.body, base), url);
+    if (direct) return [{ url, parsed: direct }];
+
+    // The page's own feed links first; otherwise (or if the page wouldn't load) the usual places
+    let candidates = r && r.ok ? Parse.discover(r.body, base) : [];
+    if (!candidates.length) candidates = Parse.guesses(base);
+    candidates = candidates.slice(0, 16);
+    const results = await fetchBatch(candidates);
+    const found = [], same = new Set();
+    results.forEach((c, i) => {
+      const parsed = c.ok && tidy(Parse.parseFeed(c.body, c.finalUrl || candidates[i]), candidates[i]);
+      if (!parsed) return;
+      // /feed and /rss are often the same feed: keep the first
+      const sig = parsed.title + "|" + (parsed.items[0] ? parsed.items[0].id : "");
+      if (same.has(sig)) return;
+      same.add(sig);
+      found.push({ url: candidates[i], parsed });
+    });
+    if (!found.length) {
+      if (r && !r.ok && !results.some(c => c.ok)) throw new Error("Couldn't load that address" + (r.error ? " (" + r.error.replace(/^The site/, "the site") + ")" : "") + ". Check it's typed correctly.");
+      throw new Error(/youtu\.?be/.test(url) ? "Couldn't find that YouTube channel. Try the channel's page address (youtube.com/@name)." : "Couldn't find a feed at that address.");
+    }
+    return found;
+  }
+
+  // An X account: ask the best few Nitter servers at once and keep the first that answers with a feed
+  // If they all fail (they sometimes go down together), try the rest before giving up.
+  async function lookupX(user) {
+    const hosts = await nitterHosts();
+    for (const group of [hosts.slice(0, 4), hosts.slice(4)]) {
+      if (!group.length) continue;
+      const urls = group.map(h => "https://" + h + "/" + user + "/rss");
+      const results = await fetchBatch(urls);
+      for (let i = 0; i < results.length; i++) {
+        const parsed = results[i].ok && Parse.parseFeed(results[i].body, urls[i]);
+        if (parsed) return [{ url: urls[i], parsed: Parse.xify(parsed, user), x: user }];
+      }
+    }
+    throw new Error("Couldn't load @" + user + " right now. The account may not exist or be private, or the Nitter servers are busy. Try again in a few minutes.");
+  }
+
+  // The subscription this feed already is, even when reached through another address (/feed vs /rss)
+  function subscribedTo(url, parsed) {
+    const first = parsed.items[0];
+    const xu = Parse.xUser(parsed.siteUrl || "");
+    return S.feeds.find(f => f.url === url || (xu && f.x && f.x.toLowerCase() === xu.toLowerCase()) ||
+      (first && f.title === (parsed.title || f.title) && S.items.has(f.id + "|" + (first.id || first.link))));
+  }
+
+  async function addFeed(url, parsed, x) {
+    const existing = subscribedTo(url, parsed);
+    if (existing) { selectView("feed:" + existing.id); throw new Error("You're already subscribed to " + existing.title + "."); }
+    const feed = { id: uid(), url, title: parsed.title || host(parsed.siteUrl || url), siteUrl: parsed.siteUrl, added: Date.now(), lastFetch: Date.now(), error: "" };
+    if (x) feed.x = x;
+    const group = $("add-group").value.trim().replace(/\s+/g, " ");
+    if (group) feed.group = group;
+    if (parsed.icon) feed.icon = parsed.icon;
+    S.feeds.push(feed);
+    S.feeds.sort((a, b) => a.title.localeCompare(b.title));
+    merge(feed, parsed);
+    await saveFeeds();
+    renderFeeds();
+    selectView("feed:" + feed.id);
+    toast("Subscribed to " + feed.title);
+  }
+
+  async function removeFeed(id) {
+    const keys = [...S.items.values()].filter(i => i.feedId === id).map(i => i.key);
+    keys.forEach(k => S.items.delete(k));
+    S.feeds = S.feeds.filter(f => f.id !== id);
+    await Promise.all([Store.deleteItems(keys), saveFeeds()]);
+    if (S.view === "feed:" + id) selectView("all"); else { renderFeeds(); renderList(true); }
+  }
+
+  // ---------- Article state ----------
+
+  function setRead(it, read) {
+    if (!it || it.read === read) return;
+    it.read = read;
+    if (read) S.keep.add(it.key);
+    saveItems([it]);
+    const row = document.querySelector('.post[data-key="' + CSS.escape(it.key) + '"]');
+    if (row) {
+      row.classList.toggle("unread", !read);
+      const b = row.querySelector(".pact.read");
+      if (b) { b.title = read ? "Mark unread" : "Mark read"; b.setAttribute("aria-label", b.title); }
+    }
+    renderCounts();
+    if (S.current === it.key) syncReaderButtons(it);
+  }
+
+  function setStar(it, star) {
+    if (!it) return;
+    it.star = star;
+    saveItems([it]);
+    const row = document.querySelector('.post[data-key="' + CSS.escape(it.key) + '"]');
+    if (row) {
+      row.classList.toggle("starred", star);
+      const b = row.querySelector(".pact.star");
+      if (b) { b.setAttribute("aria-pressed", star); b.title = star ? "Unstar" : "Star"; }
+    }
+    renderCounts();
+    if (S.current === it.key) syncReaderButtons(it);
+  }
+
+  function markAllRead() {
+    const list = S.shown.map(k => S.items.get(k)).filter(i => i && !i.read);
+    if (!list.length) return toast("Nothing unread here");
+    list.forEach(i => { i.read = true; });
+    saveItems(list);
+    renderFeeds();
+    renderList(true);
+    toast("Marked " + list.length + " as read", "Undo", () => {
+      list.forEach(i => { i.read = false; });
+      saveItems(list);
+      renderFeeds();
+      renderList(true);
+    });
+  }
+
+  // ---------- Rendering ----------
+
+  function counts() {
+    const c = { all: 0, videos: 0, starred: 0, feeds: {}, groups: {}, hidden: {} };
+    const hide = hider();
+    const groupOf = new Map(S.feeds.map(f => [f.id, f.group || ""]));
+    for (const it of S.items.values()) {
+      if (hide(it)) { c.hidden[it.feedId] = (c.hidden[it.feedId] || 0) + 1; continue; }
+      if (it.star) c.starred++;
+      if (!it.read && isVideo(it)) c.videos++;
+      if (!it.read) {
+        c.all++;
+        c.feeds[it.feedId] = (c.feeds[it.feedId] || 0) + 1;
+        const g = groupOf.get(it.feedId);
+        if (g) c.groups[g] = (c.groups[g] || 0) + 1;
+      }
+    }
+    return c;
+  }
+
+  // ---------- Filters ----------
+
+  // Lower-case text of a post, remembered per post object (a refreshed post is a new object)
+  const textCache = new WeakMap();
+  function lowerText(it) {
+    let t = textCache.get(it);
+    if (t == null) { t = (it.title + " " + Parse.plain(it.html) + " " + (it.author || "")).toLowerCase(); textCache.set(it, t); }
+    return t;
+  }
+  const words = (s) => (s || "").split(",").map(w => w.trim().toLowerCase()).filter(Boolean);
+  const isRepost = (it) => /^RT @\w+/.test(it.title);
+  const isReply = (it) => /^R to @\w+/.test(it.title);
+
+  // A function telling whether a post is hidden: Shorts (when hidden) or the post's feed filters
+  function hider() {
+    const rules = new Map();
+    for (const f of S.feeds) {
+      const r = f.filters;
+      if (!r) continue;
+      const mute = words(r.mute), only = words(r.only);
+      if (mute.length || only.length || r.noReposts || r.noReplies || r.mediaOnly) rules.set(f.id, { ...r, mute, only });
+    }
+    return (it) => {
+      if (hiddenShort(it)) return true;
+      const r = rules.get(it.feedId);
+      if (!r) return false;
+      if (r.noReposts && isRepost(it)) return true;
+      if (r.noReplies && isReply(it)) return true;
+      if (r.mediaOnly && !it.video && !it.image && !/<img\b/i.test(it.html || "")) return true;
+      if (r.mute.length || r.only.length) {
+        const t = lowerText(it);
+        if (r.mute.some(w => t.includes(w))) return true;
+        if (r.only.length && !r.only.some(w => t.includes(w))) return true;
+      }
+      return false;
+    };
+  }
+
+  function renderCounts() {
+    const c = counts();
+    $("count-all").textContent = c.all || "";
+    $("count-starred").textContent = c.starred || "";
+    $("count-videos").textContent = c.videos || "";
+    for (const li of document.querySelectorAll(".feed")) li.querySelector(".count").textContent = c.feeds[li.dataset.id] || "";
+    for (const b of document.querySelectorAll('.ghead .nav')) b.querySelector(".count").textContent = c.groups[b.dataset.view.slice(6)] || "";
+    for (const b of document.querySelectorAll(".story[data-view]")) b.classList.toggle("new", !!c.feeds[b.dataset.view.slice(5)]);
+    document.title = c.all ? "(" + c.all + ") Reader" : "Reader";
+  }
+
+  // A feed's picture: its own logo / profile picture, else the site's icon, else a coloured initial.
+  // YouTube and X feeds without a picture get the initial (the site icon would be the same for all of them).
+  function avatar(feed, cls) {
+    const h = host(feed.siteUrl || feed.url);
+    const src = feed.icon || (/^(youtube\.com|x\.com|twitter\.com)$/.test(h) || !h ? "" : "https://icons.duckduckgo.com/ip3/" + h + ".ico");
+    if (!src) return letterIcon(feed, cls);
+    const img = el("img", "av " + (cls || ""));
+    img.alt = "";
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+    img.src = src;
+    img.onerror = () => { img.replaceWith(letterIcon(feed, cls)); };
+    return img;
+  }
+  const favicon = (feed) => avatar(feed, "fav");
+
+  function letterIcon(feed, cls) {
+    const name = (feed.title || "?").replace(/^[^\p{L}\p{N}]+/u, "") || "?";
+    const s = el("span", "av letter " + (cls || ""), name.charAt(0).toUpperCase());
+    let hash = 0;
+    for (const c of feed.title || "") hash = (hash * 31 + c.charCodeAt(0)) | 0;
+    s.style.setProperty("--hue", Math.abs(hash) % 360);
+    return s;
+  }
+
+  const groupNames = () => [...new Set(S.feeds.map(f => f.group).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const groupFeeds = (g) => S.feeds.filter(f => f.group === g);
+  const FOLDER = '<svg viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>';
+  const CHEVRON = '<svg viewBox="0 0 24 24"><path d="m8 10 4 4 4-4"/></svg>';
+
+  function feedLi(f) {
+    const li = el("li", "feed");
+    li.dataset.id = f.id;
+    const b = el("button", "nav");
+    b.dataset.view = "feed:" + f.id;
+    b.append(favicon(f), el("span", "name", f.title));
+    if (f.error) { const w = el("i", "warn", "!"); w.title = f.error; b.append(w); }
+    if (hasFilters(f)) { const fl = el("i", "flt"); fl.title = "Filtered"; fl.innerHTML = '<svg viewBox="0 0 24 24"><path d="M4 6h16l-6 7v5l-4 2v-7z"/></svg>'; b.append(fl); }
+    b.append(el("b", "count"));
+    const edit = el("button", "icon edit");
+    edit.title = "Edit or filter " + f.title;
+    edit.setAttribute("aria-label", edit.title);
+    edit.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg>';
+    edit.onclick = (e) => { e.stopPropagation(); openFeedDialog(f); };
+    li.append(b, edit);
+    return li;
+  }
+
+  function renderFeeds() {
+    const ul = $("feeds");
+    ul.textContent = "";
+    if (!S.feeds.length) ul.append(el("li", "hint", "You don’t follow anything yet."));
+    const collapsed = S.settings.collapsed || {};
+    for (const g of groupNames()) {
+      const li = el("li", "group" + (collapsed[g] ? " closed" : ""));
+      const head = el("div", "ghead");
+      const b = el("button", "nav");
+      b.dataset.view = "group:" + g;
+      b.innerHTML = FOLDER;
+      b.append(el("span", "name", g), el("b", "count"));
+      const tog = el("button", "icon gtoggle");
+      tog.innerHTML = CHEVRON;
+      tog.setAttribute("aria-expanded", !collapsed[g]);
+      tog.setAttribute("aria-label", (collapsed[g] ? "Show " : "Hide ") + g + " feeds");
+      tog.onclick = (e) => {
+        e.stopPropagation();
+        const c = S.settings.collapsed = { ...(S.settings.collapsed || {}) };
+        if (c[g]) delete c[g]; else c[g] = true;
+        saveSettings();
+        renderFeeds();
+      };
+      const menu = el("button", "icon edit");
+      menu.title = "Rename or remove group " + g;
+      menu.setAttribute("aria-label", menu.title);
+      menu.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/></svg>';
+      menu.onclick = (e) => { e.stopPropagation(); renameGroup(g); };
+      head.append(tog, b, menu);
+      const inner = el("ul", "gfeeds");
+      for (const f of groupFeeds(g)) inner.append(feedLi(f));
+      li.append(head, inner);
+      ul.append(li);
+    }
+    for (const f of S.feeds.filter(f => !f.group)) ul.append(feedLi(f));
+    // Group names offered in the Add and Edit dialogs
+    const dl = $("group-names");
+    dl.textContent = "";
+    for (const g of groupNames()) { const o = el("option"); o.value = g; dl.append(o); }
+    markActiveNav();
+    renderCounts();
+  }
+
+  function renameGroup(g) {
+    const name = prompt("Rename the group “" + g + "”.\nLeave it empty to remove the group (its feeds stay, just ungrouped).", g);
+    if (name == null) return;
+    const to = name.trim();
+    for (const f of groupFeeds(g)) f.group = to;
+    if (S.settings.collapsed && S.settings.collapsed[g]) { delete S.settings.collapsed[g]; if (to) S.settings.collapsed[to] = true; saveSettings(); }
+    saveFeeds();
+    if (S.view === "group:" + g) S.view = to ? "group:" + to : "all";
+    renderFeeds();
+    renderList(true);
+  }
+
+  const hasFilters = (f) => !!f.filters && !!(f.filters.mute || f.filters.only || f.filters.noReposts || f.filters.noReplies || f.filters.mediaOnly);
+
+  function markActiveNav() {
+    for (const b of document.querySelectorAll(".side .nav, .tabs [data-view]")) b.classList.toggle("active", b.dataset.view === S.view);
+  }
+
+  function viewItems() {
+    const hide = hider();
+    let list = [...S.items.values()].filter(i => !hide(i));
+    if (S.view === "starred") list = list.filter(i => i.star);
+    else if (S.view === "videos") list = list.filter(isVideo);
+    else if (S.view.startsWith("feed:")) { const id = S.view.slice(5); list = list.filter(i => i.feedId === id); }
+    else if (S.view.startsWith("group:")) { const ids = new Set(groupFeeds(S.view.slice(6)).map(f => f.id)); list = list.filter(i => ids.has(i.feedId)); }
+    // Read posts leave the timeline at the next refresh or launch (until then they stay where they are)
+    if (S.settings.unreadOnly && S.view !== "starred") list = list.filter(i => !i.read || S.keep.has(i.key) || i.key === S.current);
+    if (S.query) {
+      const q = S.query.toLowerCase();
+      list = list.filter(i => i.title.toLowerCase().includes(q) || Parse.plain(i.html).toLowerCase().includes(q) || (i.author || "").toLowerCase().includes(q));
+    }
+    return list.sort((a, b) => b.date - a.date);
+  }
+
+  const isVideo = (it) => !!it.video && !it.video.audio;
+  const hiddenShort = (it) => S.settings.hideShorts && it.video && it.video.short;
+
+  function renderList(keepScroll) {
+    const ul = $("items");
+    const top = keepScroll ? $("timeline").scrollTop : 0;
+    S.shown = viewItems().map(i => i.key);
+    S.rendered = 0;
+    readObserver.disconnect();
+    ul.textContent = "";
+    renderTop();
+    $("view-title").textContent = S.view === "all" ? "Home" : S.view === "starred" ? "Starred" : S.view === "videos" ? "Videos" : S.view.startsWith("group:") ? S.view.slice(6) : (feedById(S.view.slice(5)) || {}).title || "Feed";
+    $("unread-btn").setAttribute("aria-pressed", S.settings.unreadOnly);
+    $("unread-btn").title = S.settings.unreadOnly ? "Read posts hidden after a refresh: show them" : "Showing read posts: hide them";
+    renderMore();
+    const empty = $("empty");
+    empty.hidden = S.shown.length > 0;
+    if (!S.shown.length) {
+      empty.textContent = !S.feeds.length ? "" : S.query ? "No posts match “" + S.query + "”." : S.view.startsWith("group:") && !groupFeeds(S.view.slice(6)).length ? "This group is empty." : S.view === "starred" ? "Star posts to keep them here." : S.view === "videos" ? "Videos from YouTube channels and video feeds show up here. Follow a YouTube channel with the + button (paste its youtube.com/@name address)." : S.settings.unreadOnly ? "You're all caught up." : "No posts yet.";
+      if (S.feeds.length && S.settings.unreadOnly && !S.query && S.view !== "starred") {
+        const again = el("div", "actions center");
+        const showRead = el("button", "btn", "Show read posts");
+        showRead.onclick = () => { S.settings.unreadOnly = false; saveSettings(); renderList(); };
+        const pullHint = el("p", "hint", "Pull down or press refresh to check for new posts.");
+        again.append(showRead);
+        empty.append(pullHint, again);
+      }
+      if (!S.feeds.length) {
+        empty.append(el("h3", null, "Welcome to Reader"), el("p", null, "Follow your favourite sites in one place. Everything stays on this device."));
+        const add = el("button", "btn primary", "Follow your first feed");
+        add.onclick = openAddDialog;
+        const imp = el("button", "btn", "Import OPML");
+        imp.onclick = () => $("import-file").click();
+        const row = el("div", "actions center");
+        row.append(imp, add);
+        empty.append(row);
+      }
+    }
+    $("timeline").scrollTop = top;
+  }
+
+  // Above the timeline: the feeds you follow as a row of pictures (unread ones ringed), or, on a feed's
+  // own page, its profile.
+  function renderTop() {
+    const top = $("top");
+    top.textContent = "";
+    const c = counts();
+    if (S.view.startsWith("feed:")) {
+      const f = feedById(S.view.slice(5));
+      if (!f) return;
+      const prof = el("div", "profile");
+      const info = el("div", "pinfo");
+      const link = el("a", "plink", f.x ? "@" + f.x : host(f.siteUrl || f.url));
+      link.href = f.siteUrl || f.url; link.target = "_blank"; link.rel = "noopener noreferrer";
+      const total = [...S.items.values()].filter(i => i.feedId === f.id).length;
+      info.append(el("h2", null, f.title), link, el("p", "pstats", total + (total === 1 ? " post" : " posts") + (c.feeds[f.id] ? " · " + c.feeds[f.id] + " unread" : "") +
+        (c.hidden[f.id] ? " · " + c.hidden[f.id] + " hidden by filters" : "") + (f.group ? " · in " + f.group : "") + (f.error ? " · last refresh failed" : "")));
+      const edit = el("button", "btn", hasFilters(f) ? "Edit · Filtered" : "Edit & filter");
+      edit.onclick = () => openFeedDialog(f);
+      prof.append(avatar(f, "big"), info, edit);
+      top.append(prof);
+      return;
+    }
+    if (S.view === "starred" || !S.feeds.length || S.query) return;
+    const latest = {};
+    for (const it of S.items.values()) if (!latest[it.feedId] || it.date > latest[it.feedId]) latest[it.feedId] = it.date;
+    const pool = S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.feeds;
+    const feeds = [...pool].sort((a, b) => (!!c.feeds[b.id] - !!c.feeds[a.id]) || ((latest[b.id] || 0) - (latest[a.id] || 0)));
+    const row = el("div", "stories");
+    const add = el("button", "story add");
+    add.append(el("span", "ring", "+"), el("span", "sname", "Follow"));
+    add.onclick = openAddDialog;
+    row.append(add);
+    for (const f of feeds) {
+      const b = el("button", "story" + (c.feeds[f.id] ? " new" : ""));
+      b.dataset.view = "feed:" + f.id;
+      b.title = f.title + (c.feeds[f.id] ? " · " + c.feeds[f.id] + " unread" : "");
+      const ring = el("span", "ring");
+      ring.append(avatar(f));
+      b.append(ring, el("span", "sname", f.title));
+      row.append(b);
+    }
+    top.append(row);
+  }
+
+  function renderMore() {
+    const ul = $("items");
+    const old = ul.querySelector(".sentinel");
+    if (old) old.remove();
+    const frag = document.createDocumentFragment();
+    const end = Math.min(S.shown.length, S.rendered + PAGE);
+    for (let i = S.rendered; i < end; i++) { const li = itemRow(S.items.get(S.shown[i])); readObserver.observe(li); frag.append(li); }
+    S.rendered = end;
+    if (end < S.shown.length) {
+      const s = el("li", "sentinel");
+      frag.append(s);
+      moreObserver.observe(s);
+    }
+    ul.append(frag);
+  }
+
+  const moreObserver = new IntersectionObserver((entries) => {
+    if (entries.some(e => e.isIntersecting)) { moreObserver.disconnect(); renderMore(); }
+  }, { rootMargin: "600px" });
+
+  const ICONS = {
+    star: '<svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg>',
+    share: '<svg viewBox="0 0 24 24"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 13v6a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-6"/></svg>',
+    open: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+    read: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg>'
+  };
+
+  function actionBtn(cls, icon, label) {
+    const b = el("button", "pact " + cls);
+    b.type = "button";
+    b.innerHTML = ICONS[icon];
+    b.title = label;
+    b.setAttribute("aria-label", label);
+    return b;
+  }
+
+  // A post in the timeline: who and when, the text, a big picture or video, and actions
+  function itemRow(it) {
+    const f = feedById(it.feedId) || { title: "", url: "" };
+    const li = el("li", "post" + (it.read ? "" : " unread") + (it.star ? " starred" : "") + (it.key === S.current ? " active" : "") + (it.video ? " media" : "") + (isVideo(it) ? " video" : ""));
+    li.dataset.key = it.key;
+    li.tabIndex = 0;
+
+    const head = el("div", "phead");
+    const who = el("div", "who");
+    const name = el("button", "pname", f.title);
+    name.type = "button";
+    name.dataset.view = "feed:" + f.id;
+    const time = el("time", null, ago(it.date));
+    time.dateTime = new Date(it.date).toISOString();
+    time.title = new Date(it.date).toLocaleString();
+    const sub = el("span", "psub");
+    const handle = f.x ? (/^@\w+$/.test(it.author || "") ? it.author : "@" + f.x) : it.author && it.author !== f.title ? it.author : "";
+    if (f.x && isRepost(it)) {
+      const rp = el("div", "repost", "↻ @" + f.x + " reposted");
+      li.append(rp);
+    }
+    if (handle) sub.append(el("span", "handle", handle), el("span", "dot", "·"));
+    sub.append(time);
+    who.append(name, sub);
+    const face = avatar(f);
+    face.dataset.view = "feed:" + f.id;
+    head.append(face, who, el("span", "udot"));
+    li.append(head);
+
+    // Short posts (X, Mastodon…) repeat their text as the title: show the text once
+    const text = Parse.plain(it.html, 600);
+    const lead = it.title.replace(/…$/, "");
+    const micro = !!f.x || (!!text && lead.length > 20 && text.startsWith(lead.slice(0, 40)));
+    if (micro) {
+      const p = el("p", "ptext full");
+      p.append(text ? richText(it, f, 600, true) : it.title);
+      li.append(p);
+    } else {
+      li.append(el("h3", "ptitle", it.title));
+      const snip = Parse.plain(it.html, 280);
+      if (snip && snip !== it.title && !isVideo(it)) { const p = el("p", "ptext"); p.append(richText(it, f, 280, false)); li.append(p); }
+    }
+
+    const pics = it.video ? [] : gallery(it);
+    if (pics.length) li.append(galleryEl(pics));
+    else if (it.image || it.video) {
+      const box = el("div", "pmedia" + (it.video && it.video.short ? " short" : "") + (it.video ? (it.video.audio ? " audio" : " playable") : ""));
+      if (it.image && !(it.video && it.video.audio)) {
+        const img = el("img");
+        img.alt = "";
+        img.loading = "lazy";
+        img.referrerPolicy = "no-referrer";
+        img.src = it.image;
+        img.onerror = () => { img.remove(); if (!it.video) box.remove(); };
+        box.append(img);
+      }
+      if (it.video) {
+        box.append(el("span", "play", "▶"));
+        if (it.video.audio) box.append(el("span", "alabel", it.pos > 5 && !it.watched ? "Resume episode" : "Play episode"));
+        if (it.video.ytOnly) box.append(el("span", "badge yt", "Plays on YouTube"));
+        else if (it.watched) box.append(el("span", "badge", "Watched"));
+        else if (it.pos > 5 && it.dur) { const bar = el("span", "progress"); const fill = el("i"); fill.style.width = Math.min(100, it.pos / it.dur * 100) + "%"; bar.append(fill); box.append(bar); }
+      }
+      li.append(box);
+    }
+
+    const acts = el("div", "pactions");
+    const star = actionBtn("star", "star", it.star ? "Unstar" : "Star");
+    star.setAttribute("aria-pressed", it.star);
+    acts.append(star, actionBtn("share", "share", "Share"));
+    if (it.link) {
+      const a = el("a", "pact open");
+      a.href = it.link; a.target = "_blank"; a.rel = "noopener noreferrer";
+      a.innerHTML = ICONS.open;
+      a.title = "Open on " + (host(it.link) || "the site");
+      a.setAttribute("aria-label", a.title);
+      acts.append(a);
+    }
+    acts.append(el("span", "grow"), actionBtn("read", "read", it.read ? "Mark unread" : "Mark read"));
+    li.append(acts);
+    return li;
+  }
+
+  // A post's text for the timeline with its links kept: the post's own links, plus bare web addresses
+  // (and @mentions and #hashtags for X accounts) made clickable. Cut at `max` characters.
+  function richText(it, f, max, multiline) {
+    const base = it.link || f.siteUrl || f.url;
+    const doc = new DOMParser().parseFromString("<!doctype html><body>" + Parse.sanitize(it.html, base), "text/html");
+    const frag = document.createDocumentFragment();
+    let used = 0, done = false, lastBreak = true;
+    const addText = (t) => {
+      if (done || !t) return;
+      if (t === "\n") {
+        if (lastBreak) return;
+        lastBreak = true;
+        t = multiline ? "\n" : " ";
+      } else {
+        if (lastBreak) t = t.replace(/^\s+/, "");
+        if (!t) return;
+        lastBreak = false;
+      }
+      if (used + t.length > max) { t = t.slice(0, Math.max(0, max - used)).replace(/\s+\S*$/, "") + "…"; done = true; }
+      used += t.length;
+      linkify(frag, t, f);
+    };
+    const walk = (node) => {
+      for (const n of node.childNodes) {
+        if (done) return;
+        if (n.nodeType === 3) { addText(n.nodeValue.replace(/\s+/g, " ")); continue; }
+        if (n.nodeType !== 1) continue;
+        const tag = n.localName;
+        if (/^(img|video|audio|picture|svg|figure|table)$/.test(tag)) continue;
+        if (tag === "br") { addText("\n"); continue; }
+        if (tag === "a" && n.getAttribute("href")) {
+          const label = n.textContent.replace(/\s+/g, " ").trim();
+          if (!label) continue;
+          if (used + label.length > max) { addText(label); continue; }
+          frag.append(linkEl(n.getAttribute("href"), label));
+          used += label.length;
+          lastBreak = false;
+          continue;
+        }
+        const block = /^(p|div|li|h[1-6]|blockquote|ul|ol|pre|tr|section|article)$/.test(tag);
+        if (block) addText("\n");
+        walk(n);
+        if (block) addText("\n");
+      }
+    };
+    walk(doc.body);
+    while (frag.lastChild && frag.lastChild.nodeType === 3 && !frag.lastChild.nodeValue.trim()) frag.lastChild.remove();
+    return frag;
+  }
+
+  function linkEl(href, label) {
+    const a = el("a", "tlink", /^https?:\/\//.test(label) ? shortUrl(label) : label);
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.title = href;
+    return a;
+  }
+  const shortUrl = (u) => { const s = u.replace(/^https?:\/\/(www\.)?/, ""); return s.length > 38 ? s.slice(0, 36) + "…" : s; };
+
+  function linkify(frag, text, f) {
+    const re = f.x ? /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])|(^|[^\w@/])@(\w{1,15})|(^|[^\w&/])#([\p{L}\p{N}_]+)/gu : /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g;
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m[1]) { frag.append(text.slice(last, m.index), linkEl(m[1], m[1])); }
+      else if (m[3]) { frag.append(text.slice(last, m.index) + m[2], linkEl("https://x.com/" + m[3], "@" + m[3])); }
+      else if (m[5]) { frag.append(text.slice(last, m.index) + m[4], linkEl("https://x.com/hashtag/" + encodeURIComponent(m[5]), "#" + m[5])); }
+      last = re.lastIndex;
+    }
+    frag.append(text.slice(last));
+  }
+
+  // A post's pictures: the ones in its text, else the feed's picture for it
+  function gallery(it) {
+    const f = feedById(it.feedId) || {};
+    const imgs = Parse.images(it.html, it.link || f.siteUrl || f.url);
+    if (!imgs.length && it.image) imgs.push(it.image);
+    return imgs;
+  }
+
+  // 1 picture: shown whole. 2–4: a grid (like social apps). More: "+N" on the fourth.
+  function galleryEl(pics) {
+    const shown = pics.slice(0, 4);
+    const g = el("div", "pgallery n" + shown.length);
+    const retag = () => { if (!g.children.length) g.remove(); else g.className = "pgallery n" + g.children.length; };
+    shown.forEach((src, i) => {
+      const cell = el("button", "cell");
+      cell.type = "button";
+      cell.dataset.i = i;
+      cell.setAttribute("aria-label", "View picture " + (i + 1) + " of " + pics.length);
+      const img = el("img");
+      img.alt = "";
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      img.src = src;
+      img.onerror = () => { cell.remove(); retag(); };
+      // Small pictures (thumbnails) are shown at their own size rather than blown up
+      img.onload = () => { if (shown.length === 1 && img.naturalWidth && img.naturalWidth < 320) g.classList.add("small"); };
+      cell.append(img);
+      if (i === 3 && pics.length > 4) cell.append(el("span", "more", "+" + (pics.length - 4)));
+      g.append(cell);
+    });
+    return g;
+  }
+
+  // ---------- Picture viewer ----------
+
+  const LB = { list: [], i: 0, closing: false };
+  function openLightbox(list, i) {
+    if (!list.length) return;
+    LB.list = list;
+    LB.i = Math.max(0, Math.min(i, list.length - 1));
+    showLightbox();
+    $("lightbox").hidden = false;
+    history.pushState({ lightbox: true }, "");
+    $("lb-close").focus();
+  }
+  function showLightbox() {
+    $("lb-img").src = LB.list[LB.i];
+    $("lb-count").textContent = LB.list.length > 1 ? (LB.i + 1) + " / " + LB.list.length : "";
+    $("lb-prev").hidden = LB.i === 0;
+    $("lb-next").hidden = LB.i >= LB.list.length - 1;
+  }
+  function stepLightbox(d) {
+    const i = LB.i + d;
+    if (i < 0 || i >= LB.list.length) return;
+    LB.i = i;
+    showLightbox();
+  }
+  function closeLightbox(fromHistory) {
+    if ($("lightbox").hidden) return;
+    $("lightbox").hidden = true;
+    $("lb-img").removeAttribute("src");
+    if (!fromHistory && history.state && history.state.lightbox) { LB.closing = true; history.back(); }
+  }
+  $("lb-close").onclick = () => closeLightbox();
+  $("lb-prev").onclick = (e) => { e.stopPropagation(); stepLightbox(-1); };
+  $("lb-next").onclick = (e) => { e.stopPropagation(); stepLightbox(1); };
+  $("lightbox").addEventListener("click", (e) => { if (e.target === $("lightbox")) closeLightbox(); });
+  // Swipe left / right between pictures, down to close
+  let swipe = null;
+  $("lightbox").addEventListener("pointerdown", (e) => { swipe = { x: e.clientX, y: e.clientY }; });
+  $("lightbox").addEventListener("pointerup", (e) => {
+    if (!swipe) return;
+    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
+    swipe = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) stepLightbox(dx < 0 ? 1 : -1);
+    else if (dy > 90) closeLightbox();
+  });
+
+  async function share(it) {
+    const url = it.link || "";
+    try {
+      if (navigator.share) return await navigator.share({ title: it.title, url });
+      await navigator.clipboard.writeText(url);
+      toast("Link copied");
+    } catch (e) { /* cancelled */ }
+  }
+
+  // Play a video or episode right in the timeline
+  function playInline(li, it) {
+    stopPlayer();
+    const box = li.querySelector(".pmedia");
+    if (!box) return;
+    const p = playerFor(it);
+    p.classList.add("inline");
+    box.replaceWith(p);
+    setRead(it, true);
+  }
+
+  function ago(t) {
+    const s = (Date.now() - t) / 1000;
+    if (s < 60) return "now";
+    if (s < 3600) return Math.floor(s / 60) + "m";
+    if (s < 86400) return Math.floor(s / 3600) + "h";
+    if (s < 7 * 86400) return Math.floor(s / 86400) + "d";
+    return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", year: new Date(t).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+  }
+
+  // ---------- Reading ----------
+
+  function openArticle(key, { fromHistory } = {}) {
+    const it = S.items.get(key);
+    if (!it) return;
+    const prev = document.querySelector(".post.active");
+    if (prev) prev.classList.remove("active");
+    S.current = key;
+    const row = document.querySelector('.post[data-key="' + CSS.escape(key) + '"]');
+    if (row) { row.classList.add("active"); row.scrollIntoView({ block: "nearest" }); }
+
+    const f = feedById(it.feedId) || { title: "" };
+    const art = $("article");
+    stopPlayer();
+    art.textContent = "";
+    art.classList.toggle("has-video", !!it.video && !it.video.audio);
+    if (it.video) art.append(playerFor(it));
+    const head = el("header");
+    const src = el("a", "src");
+    src.append(avatar(f), el("span", null, f.title));
+    src.href = f.siteUrl || it.link || "#";
+    src.target = "_blank";
+    src.rel = "noopener noreferrer";
+    const h = el("h1");
+    if (it.link) {
+      const a = el("a", null, it.title);
+      a.href = it.link; a.target = "_blank"; a.rel = "noopener noreferrer";
+      h.append(a);
+    } else h.textContent = it.title;
+    const by = el("p", "byline", [it.author, new Date(it.date).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })].filter(Boolean).join(" · "));
+    head.append(src, h, by);
+    const content = el("div", "content");
+    const clean = Parse.sanitize(it.html, it.link || f.siteUrl);
+    content.innerHTML = clean;
+    // Show the feed's picture when the article itself has none (videos have the player instead)
+    if (it.image && !content.querySelector("img") && !(it.video && !it.video.audio)) {
+      const img = el("img", "lead");
+      img.src = it.image; img.alt = ""; img.referrerPolicy = "no-referrer";
+      img.onerror = () => img.remove();
+      content.prepend(img);
+    }
+    for (const img of content.querySelectorAll("img")) img.addEventListener("error", () => img.remove());
+    if (it.video) linkTimestamps(content);
+    if (!Parse.plain(clean).length && !content.querySelector("img") && !it.video) content.append(el("p", "muted", "This feed only shares a headline."));
+    art.append(head, content);
+    if (it.link) {
+      const more = el("a", "btn readmore", (it.video && it.video.kind === "youtube" ? "Watch on " : "Read on ") + (host(it.link) || "the site"));
+      more.href = it.link; more.target = "_blank"; more.rel = "noopener noreferrer";
+      art.append(more);
+    }
+    $("reader-scroll").scrollTop = 0;
+    $("open-btn").href = it.link || "#";
+    $("open-btn").hidden = !it.link;
+    setRead(it, true);
+    syncReaderButtons(it);
+    document.body.classList.add("reading");
+    if (!fromHistory && !(history.state && history.state.article)) history.pushState({ article: key }, "");
+  }
+
+  function closeArticle() {
+    document.body.classList.remove("reading");
+    // Stop any video or audio once the article slides away
+    if ($("article").querySelector(".player")) setTimeout(() => { if (!document.body.classList.contains("reading")) { stopPlayer(); $("article").querySelector(".player")?.remove(); } }, 260);
+    if (S.settings.unreadOnly) setTimeout(() => renderList(true), 250);
+  }
+
+  function syncReaderButtons(it) {
+    $("star-btn").setAttribute("aria-pressed", it.star);
+    $("star-btn").title = it.star ? "Unstar (s)" : "Star (s)";
+    $("read-btn").title = it.read ? "Mark unread (m)" : "Mark read (m)";
+    $("read-btn").classList.toggle("on", !it.read);
+  }
+
+  function step(dir) {
+    const i = S.shown.indexOf(S.current);
+    const next = S.shown[i < 0 ? 0 : i + dir];
+    if (!next) return;
+    while (S.shown.indexOf(next) >= S.rendered) renderMore();
+    openArticle(next);
+  }
+
+  // ---------- Video / audio player ----------
+
+  // The YouTube player talks to the page with postMessage (the same messages its IFrame API uses), so we
+  // can save where you stopped, mark videos watched and make timestamps in descriptions seek, without
+  // loading any YouTube script into the page.
+  const player = { frame: null, media: null, item: null, ready: false, timer: 0, lastSave: 0 };
+
+  function playerFor(it) {
+    const v = it.video;
+    const wrap = el("div", "player" + (v.short ? " short" : "") + (v.audio ? " audio" : ""));
+    player.item = it;
+    player.ready = false;
+    const start = !it.watched && it.pos > 5 && (!it.dur || it.pos < it.dur - 10) ? Math.floor(it.pos) : 0;
+    if (v.kind === "x") {
+      // Just the video: its file comes from the post's Nitter page (saved once found). If no server has it,
+      // fall back to X's embedded post.
+      wrap.classList.add("xvid");
+      const fallback = () => { wrap.className = "player x" + (wrap.classList.contains("inline") ? " inline" : ""); wrap.textContent = ""; xEmbed(wrap, it, v); };
+      if (v.src) mediaEl(wrap, it, { url: v.src, gif: v.gif }, start, fallback);
+      else {
+        wrap.append(el("div", "xload", "Loading video…"));
+        xVideoSrc(it).then(found => {
+          if (!wrap.isConnected || player.item !== it) return;
+          wrap.textContent = "";
+          if (!found) return fallback();
+          v.src = found.src;
+          v.gif = found.gif;
+          saveItems([it]);
+          mediaEl(wrap, it, { url: v.src, gif: v.gif }, start, fallback);
+        });
+      }
+    } else if (v.kind === "youtube") {
+      // Known to play only on YouTube: say so straight away instead of loading a player that will refuse
+      if (v.ytOnly) {
+        if (S.settings.invidious) playInvidious(wrap, it, v, start);
+        else ytCard(wrap, it, v, "Plays only on YouTube", "The uploader doesn't allow this video to be played in other apps.");
+        return wrap;
+      }
+      const f = el("iframe");
+      const q = new URLSearchParams({ autoplay: "1", enablejsapi: "1", rel: "0", playsinline: "1", origin: location.origin });
+      if (start) q.set("start", start);
+      f.dataset.query = q;
+      f.src = "https://www.youtube-nocookie.com/embed/" + encodeURIComponent(v.id) + "?" + q;
+      f.title = it.title;
+      f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write; web-share";
+      f.allowFullscreen = true;
+      // YouTube refuses to play embeds that don't say which site they're on
+      f.referrerPolicy = "strict-origin-when-cross-origin";
+      f.addEventListener("load", () => listen(f));
+      player.frame = f;
+      wrap.append(f);
+      // A player that never answers was blocked (an extension or the browser's protection)
+      setTimeout(() => {
+        if (player.frame !== f || player.ready || !f.isConnected) return;
+        ytCard(wrap, it, v, "YouTube's player didn't load", "An ad blocker or your browser's privacy protection is probably blocking it. Allow this site, or watch it on YouTube.", true);
+      }, 12000);
+    } else mediaEl(wrap, it, v, start);
+    return wrap;
+  }
+
+  // A video or audio file in Reader's own player (remembers where you stopped). GIFs loop silently.
+  function mediaEl(wrap, it, v, start, onError) {
+    const m = el(v.audio ? "audio" : "video");
+    m.controls = true;
+    m.preload = "metadata";
+    m.playsInline = true;
+    if (v.gif) { m.loop = true; m.muted = true; }
+    m.src = v.url;
+    if (it.image && !v.audio) m.poster = it.image;
+    m.addEventListener("loadedmetadata", () => { if (start && !v.gif) m.currentTime = start; m.play().catch(() => {}); });
+    if (!v.gif) {
+      m.addEventListener("timeupdate", () => progress(m.currentTime, m.duration));
+      m.addEventListener("pause", () => progress(m.currentTime, m.duration, true));
+      m.addEventListener("ended", () => finished());
+    }
+    m.addEventListener("error", () => { if (onError) onError(); else wrap.replaceChildren(el("p", "muted", "This file can't be played here.")); });
+    player.media = m;
+    wrap.append(m);
+  }
+
+  // Find an X post's video file on Nitter: the feed's own server first, then two others, in one call
+  async function xVideoSrc(it) {
+    const m = /x\.com\/([A-Za-z0-9_]{1,15})\/status\/(\d+)/.exec(it.link || "");
+    if (!m) return null;
+    const f = feedById(it.feedId) || {};
+    const hosts = [f.x ? new URL(f.url).hostname : "", ...(await nitterHosts())].filter((h, i, a) => h && a.indexOf(h) === i).slice(0, 3);
+    const urls = hosts.map(h => "https://" + h + "/" + m[1] + "/status/" + m[2]);
+    let results;
+    try { results = await fetchBatch(urls); } catch (e) { return null; }
+    for (const r of results) {
+      const found = r.ok && Parse.nitterVideo(r.body);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // X's official embedded post (text + video); it reports its height so the frame can fit it
+  function xEmbed(wrap, it, v) {
+    const f = el("iframe");
+    const dark = document.documentElement.dataset.theme === "dark" || (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+    f.src = "https://platform.twitter.com/embed/Tweet.html?" + new URLSearchParams({ id: v.id, dnt: "true", theme: dark ? "dark" : "light", hideThread: "true", lang: "en" });
+    f.title = it.title;
+    f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    f.allowFullscreen = true;
+    f.referrerPolicy = "strict-origin-when-cross-origin";
+    wrap.classList.add("x");
+    player.frame = f;
+    wrap.append(f);
+    // Privacy protections (Brave Shields, Firefox tracking protection, ad blockers) often block X's player.
+    // It reports its size as soon as it works; if it hasn't after a few seconds, explain and offer X instead.
+    setTimeout(() => {
+      if (f.dataset.ok || !f.isConnected) return;
+      wrap.classList.add("blocked");
+      const note = el("div", "blocked-note");
+      note.append(el("b", null, "X's video player didn't load"),
+        el("p", null, "Your browser's privacy protection or an ad blocker is probably blocking it. Allow this site in Brave Shields, Firefox's tracking protection or your blocker, or watch it on X."));
+      const go = el("a", "btn primary", "Watch on X");
+      go.href = it.link || "https://x.com/i/status/" + v.id; go.target = "_blank"; go.rel = "noopener noreferrer";
+      note.append(go);
+      wrap.append(note);
+    }, 8000);
+  }
+
+  // Ask the YouTube player to start sending its state; repeat until it answers (it may load slowly)
+  function listen(f) {
+    clearInterval(player.timer);
+    let tries = 0;
+    const send = () => {
+      if (player.ready || player.frame !== f || ++tries > 20) return clearInterval(player.timer);
+      try { f.contentWindow.postMessage(JSON.stringify({ event: "listening", id: 1, channel: "widget" }), "*"); } catch (e) {}
+    };
+    send();
+    player.timer = setInterval(send, 500);
+  }
+
+  function command(func, args) {
+    if (player.frame) player.frame.contentWindow.postMessage(JSON.stringify({ event: "command", func, args: args || [], id: 1, channel: "widget" }), "*");
+  }
+
+  // X embeds say how tall they are: { "twttr.embed": { method: "twttr.private.resize", params: [{ height }] } }
+  addEventListener("message", (e) => {
+    if (e.origin !== "https://platform.twitter.com") return;
+    let d;
+    try { d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch (err) { return; }
+    const msg = d && d["twttr.embed"];
+    const h = msg && msg.method === "twttr.private.resize" && msg.params && msg.params[0] && msg.params[0].height;
+    if (!h) return;
+    for (const f of document.querySelectorAll(".player.x iframe")) {
+      if (f.contentWindow !== e.source) continue;
+      f.style.height = Math.ceil(h) + "px";
+      f.dataset.ok = "1";
+      // It loaded after all (slow connection): drop the warning
+      f.parentElement.classList.remove("blocked");
+      f.parentElement.querySelector(".blocked-note")?.remove();
+    }
+  });
+
+  addEventListener("message", (e) => {
+    if (!player.frame || e.source !== player.frame.contentWindow || !/^https:\/\/www\.youtube(-nocookie)?\.com$/.test(e.origin)) return;
+    let d;
+    try { d = typeof e.data === "string" ? JSON.parse(e.data) : e.data; } catch (err) { return; }
+    if (!d || !d.event) return;
+    player.ready = true;
+    // It loaded after all: drop a "didn't load" note
+    const wrap = player.frame.parentElement;
+    if (wrap && wrap.classList.contains("ytcard")) { wrap.classList.remove("ytcard", "blocked"); wrap.querySelector(".ytnote")?.remove(); }
+    if (d.event === "onError") return youtubeError(+d.info);
+    const info = d.info || {};
+    if (typeof info.currentTime === "number") progress(info.currentTime, info.duration);
+    if (info.playerState === 0) finished();
+    if (info.playerState === 2) progress(info.currentTime, info.duration, true);
+  });
+
+  // YouTube player errors: 2 bad request, 5 HTML5 player, 100 private/removed, 101 / 150 embedding not allowed,
+  // 152 / 153 player setup. First retry in YouTube's standard player (some videos refuse only the
+  // privacy-enhanced one); after that, explain and offer YouTube.
+  function youtubeError(code) {
+    const f = player.frame, it = player.item;
+    if (!f || !it || !it.video) return;
+    const v = it.video, wrap = f.parentElement;
+    if (f.src.includes("youtube-nocookie.com")) {
+      player.ready = false;
+      f.src = "https://www.youtube.com/embed/" + encodeURIComponent(v.id) + "?" + f.dataset.query;
+      return;
+    }
+    if (code === 101 || code === 150) {
+      v.ytOnly = true;
+      saveItems([it]);
+      if (S.settings.invidious) { wrap.textContent = ""; clearInterval(player.timer); player.frame = null; return playInvidious(wrap, it, v, 0); }
+      return ytCard(wrap, it, v, "Plays only on YouTube", "The uploader doesn't allow this video to be played in other apps.");
+    }
+    if (code === 100) return ytCard(wrap, it, v, "Video unavailable", "This video is private or was removed.");
+    ytCard(wrap, it, v, "This video can't play here", "YouTube's player reported a problem (" + code + ").");
+  }
+
+  // Your own Invidious server (Settings: "YouTube fallback") plays videos YouTube won't play in other apps.
+  // Asked from the browser first (works for a server on your home network), then through the feed fetcher.
+  async function playInvidious(wrap, it, v, start) {
+    const base = S.settings.invidious.replace(/\/+$/, "");
+    wrap.classList.add("xvid");
+    wrap.textContent = "";
+    wrap.append(el("div", "xload", "Loading from your Invidious server…"));
+    const api = base + "/api/v1/videos/" + encodeURIComponent(v.id) + "?local=true";
+    let data = null;
+    try { data = await (await fetch(api)).json(); } catch (e) {
+      try { const [r] = await fetchBatch([api]); if (r.ok) data = JSON.parse(r.body); } catch (e2) { /* below */ }
+    }
+    if (!wrap.isConnected || player.item !== it) return;
+    const streams = (data && data.formatStreams || []).filter(s => s.url && /mp4|webm/.test(s.type || s.container || ""));
+    // Best combined (video + sound) stream, mp4 first
+    streams.sort((a, b) => (parseInt(b.resolution || b.qualityLabel) || 0) - (parseInt(a.resolution || a.qualityLabel) || 0) || (/mp4/.test(b.type) - /mp4/.test(a.type)));
+    wrap.textContent = "";
+    if (!streams.length) {
+      wrap.classList.remove("xvid");
+      return ytCard(wrap, it, v, "Your Invidious server couldn't play it", data && data.error ? String(data.error).slice(0, 140) : "It didn't answer, or had no playable stream for this video.");
+    }
+    const url = streams[0].url.startsWith("/") ? base + streams[0].url : streams[0].url;
+    mediaEl(wrap, it, { url }, start, () => { wrap.classList.remove("xvid"); ytCard(wrap, it, v, "Your Invidious server couldn't play it", "The video stream didn't load."); });
+  }
+
+  function applyInvidious() { $("invidious-btn").textContent = "YouTube fallback: " + (S.settings.invidious ? host(S.settings.invidious) || "on" : "Off"); }
+  $("invidious-btn").onclick = () => {
+    const v = prompt("Address of your own Invidious server, used to play YouTube videos whose uploader doesn't allow playback in other apps (e.g. https://invidious.example.com).\nLeave empty to turn it off.", S.settings.invidious || "");
+    if (v == null) return;
+    const t = v.trim();
+    if (t && !/^https:\/\/[^\s/]+/i.test(t)) return toast("Use the server's https:// address");
+    S.settings.invidious = t.replace(/\/+$/, "");
+    saveSettings();
+    applyInvidious();
+    toast(t ? "YouTube fallback: " + host(t) : "YouTube fallback off");
+  };
+
+  // In place of the player: the thumbnail, why it can't play, and a button to YouTube (opens the app on phones)
+  function ytCard(wrap, it, v, title, text, keepFrame) {
+    if (!wrap) return;
+    if (!keepFrame) { wrap.textContent = ""; if (player.item === it) { clearInterval(player.timer); player.frame = null; } }
+    wrap.querySelector(".ytnote")?.remove();
+    wrap.classList.add("ytcard");
+    if (keepFrame) wrap.classList.add("blocked");
+    const note = el("div", "ytnote");
+    if (it.image) { const bg = el("img", "ytbg"); bg.src = it.image; bg.alt = ""; bg.referrerPolicy = "no-referrer"; note.append(bg); }
+    const box = el("div", "ytmsg");
+    box.append(el("b", null, title), el("p", null, text));
+    const go = el("a", "btn primary", "▶ Watch on YouTube");
+    go.href = (v.short ? "https://www.youtube.com/shorts/" : "https://www.youtube.com/watch?v=") + encodeURIComponent(v.id) + (it.pos > 5 && !it.watched ? (v.short ? "" : "&t=" + Math.floor(it.pos)) : "");
+    go.target = "_blank";
+    go.rel = "noopener noreferrer";
+    box.append(go);
+    note.append(box);
+    wrap.append(note);
+  }
+
+  function progress(pos, dur, force) {
+    const it = player.item;
+    if (!it || !isFinite(pos)) return;
+    it.pos = pos;
+    if (dur && isFinite(dur)) it.dur = dur;
+    // Save every few seconds while playing, and straight away on pause
+    if (force || Date.now() - player.lastSave > 5000) { player.lastSave = Date.now(); saveItems([it]); }
+  }
+
+  function finished() {
+    const it = player.item;
+    if (!it || it.watched) return;
+    it.watched = true;
+    it.pos = 0;
+    saveItems([it]);
+  }
+
+  function seek(t) {
+    if (player.media) { player.media.currentTime = t; player.media.play().catch(() => {}); }
+    else if (player.frame) { command("seekTo", [t, true]); command("playVideo"); }
+    const p = $("article").querySelector(".player");
+    if (p && narrow()) $("reader-scroll").scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function stopPlayer() {
+    if (player.item && player.media) progress(player.media.currentTime, player.media.duration, true);
+    else if (player.item) saveItems([player.item]);
+    clearInterval(player.timer);
+    if (player.media) player.media.pause();
+    // Refresh the list row so it shows the new progress bar / "Watched"
+    if (player.item) {
+      const row = document.querySelector('.post[data-key="' + CSS.escape(player.item.key) + '"]');
+      if (row) row.replaceWith(itemRow(player.item));
+    }
+    player.frame = player.media = player.item = null;
+  }
+
+  // "1:23" / "1:02:03" in a video description become buttons that jump there
+  function linkTimestamps(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) if (/\b\d{1,2}:\d{2}\b/.test(walker.currentNode.nodeValue) && !walker.currentNode.parentElement.closest("a")) nodes.push(walker.currentNode);
+    for (const n of nodes) {
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      const re = /\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/g;
+      let m;
+      while ((m = re.exec(n.nodeValue))) {
+        frag.append(n.nodeValue.slice(last, m.index));
+        const b = el("button", "ts", m[0]);
+        b.dataset.t = (+(m[1] || 0)) * 3600 + (+m[2]) * 60 + (+m[3]);
+        frag.append(b);
+        last = re.lastIndex;
+      }
+      frag.append(n.nodeValue.slice(last));
+      n.replaceWith(frag);
+    }
+  }
+  $("article").addEventListener("click", (e) => {
+    const b = e.target.closest(".ts");
+    if (b) return seek(+b.dataset.t);
+    if (e.target.tagName === "IMG" && e.target.closest(".content")) {
+      e.preventDefault();
+      const all = [...$("article").querySelectorAll(".content img")];
+      openLightbox(all.map(i => i.currentSrc || i.src), all.indexOf(e.target));
+    }
+  });
+
+  // ---------- Views / navigation ----------
+
+  function selectView(view) {
+    S.view = view;
+    S.current = null;
+    document.body.classList.remove("reading");
+    stopPlayer();
+    $("article").textContent = "";
+    markActiveNav();
+    renderList();
+    closeDrawer();
+  }
+
+  function openDrawer() {
+    document.body.classList.add("drawer");
+    if (!(history.state && history.state.drawer)) history.pushState({ drawer: true }, "");
+  }
+
+  function closeDrawer() {
+    if (!document.body.classList.contains("drawer")) return;
+    document.body.classList.remove("drawer");
+    if (history.state && history.state.drawer) history.back();
+  }
+
+  addEventListener("popstate", () => {
+    if (LB.closing) { LB.closing = false; return; }
+    if (!$("lightbox").hidden) return closeLightbox(true);
+    if (document.body.classList.contains("drawer")) { document.body.classList.remove("drawer"); return; }
+    if (document.body.classList.contains("reading")) closeArticle();
+  });
+
+  // ---------- Dialogs ----------
+
+  function openAddDialog() {
+    closeDrawer();
+    $("add-url").value = "";
+    $("add-group").value = S.view.startsWith("group:") ? S.view.slice(6) : "";
+    addState.input = "";
+    addState.found = null;
+    showAddResults();
+    addMessage("");
+    $("add-submit").disabled = false;
+    $("add-submit").textContent = "Follow";
+    $("add-dialog").showModal();
+    $("add-url").focus();
+  }
+
+  // Look for feeds while the person types, and list the ones that really exist
+  const addState = { input: "", found: null, seq: 0, timer: 0 };
+
+  function addMessage(msg, isError) {
+    const m = $("add-error");
+    m.hidden = !msg;
+    m.textContent = msg || "";
+    m.classList.toggle("error", !!isError);
+    m.classList.toggle("hint", !isError);
+  }
+
+  async function search(input) {
+    const seq = ++addState.seq;
+    addState.input = input;
+    addState.found = null;
+    addMessage("Looking for feeds…");
+    showAddResults();
+    try {
+      const found = await findFeeds(input);
+      if (seq !== addState.seq) return null;
+      addState.found = found;
+      addMessage(found.length > 1 ? "Found " + found.length + " feeds. Pick one:" : "");
+      showAddResults();
+      return found;
+    } catch (err) {
+      if (seq !== addState.seq) return null;
+      addMessage(err.message, true);
+      return null;
+    }
+  }
+
+  function showAddResults() {
+    const ul = $("add-results");
+    ul.textContent = "";
+    for (const r of addState.found || []) {
+      const p = r.parsed;
+      const li = el("li");
+      const b = el("button", "result");
+      b.type = "button";
+      const subscribed = !!subscribedTo(r.url, p);
+      const latest = p.items.reduce((m, i) => Math.max(m, i.date || 0), 0);
+      const info = [p.items.length + (p.items.length === 1 ? " item" : " items"), latest ? "latest " + ago(latest) + (ago(latest) === "now" ? "" : " ago") : ""].filter(Boolean).join(" · ");
+      b.append(el("b", null, p.title || host(r.url)), el("span", "url", r.x ? "x.com/" + r.x + " · via " + host(r.url) : r.url.replace(/^https?:\/\//, "")), el("span", "info", subscribed ? "Already subscribed" : info));
+      b.disabled = subscribed;
+      b.onclick = () => subscribe(r);
+      li.append(b);
+      ul.append(li);
+    }
+    ul.hidden = !ul.children.length;
+  }
+
+  async function subscribe(r) {
+    try {
+      await addFeed(r.url, r.parsed, r.x);
+      $("add-dialog").close();
+    } catch (err) {
+      addMessage(err.message, true);
+    }
+  }
+
+  $("add-url").addEventListener("input", () => {
+    clearTimeout(addState.timer);
+    const v = $("add-url").value.trim();
+    if (v === addState.input) return;
+    addState.seq++;
+    addState.found = null;
+    showAddResults();
+    addMessage("");
+    if (looksLikeAddress(v)) addState.timer = setTimeout(() => search(v), 700);
+  });
+  // Fill in the scheme when the box loses focus, so "example.com" reads as an address
+  $("add-url").addEventListener("blur", () => {
+    const v = $("add-url").value.trim();
+    if (v && !/^https?:\/\//i.test(v) && looksLikeAddress(v)) $("add-url").value = "https://" + v;
+  });
+
+  $("add-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    clearTimeout(addState.timer);
+    const v = $("add-url").value.trim();
+    if (!v) return;
+    const btn = $("add-submit");
+    btn.disabled = true;
+    btn.textContent = "Looking…";
+    try {
+      const strip = (x) => x.replace(/^https?:\/\//i, "");
+      const shown = strip(v) === strip(addState.input) && addState.found;
+      const found = shown || await search(v);
+      if (!found) return;
+      const pick = found.find(r => !subscribedTo(r.url, r.parsed));
+      if (!pick) return addMessage("You're already subscribed to " + (found[0].parsed.title || "this feed") + ".", true);
+      // Several feeds the person hasn't seen yet: they're listed now, let them choose
+      if (found.length > 1 && !shown) return;
+      await subscribe(pick);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Follow";
+    }
+  });
+  $("add-cancel").onclick = () => $("add-dialog").close();
+
+  let editing = null;
+  function openFeedDialog(f) {
+    editing = f;
+    $("feed-name").value = f.title;
+    $("feed-url").value = f.url;
+    $("feed-group").value = f.group || "";
+    const r = f.filters || {};
+    $("flt-mute").value = r.mute || "";
+    $("flt-only").value = r.only || "";
+    $("flt-media").checked = !!r.mediaOnly;
+    $("flt-reposts").checked = !!r.noReposts;
+    $("flt-replies").checked = !!r.noReplies;
+    $("flt-x").hidden = !f.x;
+    $("feed-error").textContent = f.error ? "Last refresh: " + f.error : "";
+    $("feed-error").hidden = !f.error;
+    $("feed-dialog").showModal();
+  }
+  $("feed-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!editing) return $("feed-dialog").close();
+    const name = $("feed-name").value.trim();
+    if (name && name !== editing.title) { editing.title = name; editing.customTitle = true; }
+    editing.group = $("feed-group").value.trim().replace(/\s+/g, " ");
+    if (!editing.group) delete editing.group;
+    const filters = { mute: $("flt-mute").value.trim(), only: $("flt-only").value.trim(), mediaOnly: $("flt-media").checked,
+      noReposts: !!editing.x && $("flt-reposts").checked, noReplies: !!editing.x && $("flt-replies").checked };
+    if (hasFilters({ filters })) editing.filters = filters; else delete editing.filters;
+    S.feeds.sort((a, b) => a.title.localeCompare(b.title));
+    saveFeeds();
+    renderFeeds();
+    renderList(true);
+    $("feed-dialog").close();
+  });
+  $("feed-cancel").onclick = () => $("feed-dialog").close();
+  $("feed-delete").onclick = async () => {
+    if (!editing) return;
+    const f = editing;
+    if (!confirm("Unsubscribe from " + f.title + "? Its saved articles (including starred ones) will be removed.")) return;
+    $("feed-dialog").close();
+    await removeFeed(f.id);
+    toast("Unsubscribed from " + f.title);
+  };
+  for (const d of document.querySelectorAll("dialog")) d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
+
+  // ---------- OPML ----------
+
+  $("import-btn").onclick = () => $("import-file").click();
+  $("import-file").onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const list = Parse.parseOpml(await file.text());
+    if (!list) return toast("That file isn't valid OPML");
+    const known = new Set(S.feeds.map(f => f.url));
+    const fresh = list.filter(f => !known.has(f.url) && known.add(f.url));
+    if (!fresh.length) return toast("No new feeds in that file");
+    const feeds = fresh.map(f => ({ id: uid(), url: f.url, title: f.title || host(f.url), siteUrl: f.siteUrl, added: Date.now(), lastFetch: 0, error: "", customTitle: !!f.title, ...(f.group ? { group: f.group } : {}) }));
+    S.feeds.push(...feeds);
+    S.feeds.sort((a, b) => a.title.localeCompare(b.title));
+    await saveFeeds();
+    closeDrawer();
+    renderFeeds();
+    renderList();
+    toast("Imported " + feeds.length + " feed" + (feeds.length === 1 ? "" : "s"));
+    refresh(feeds);
+  };
+
+  $("export-btn").onclick = () => {
+    if (!S.feeds.length) return toast("No feeds to export yet");
+    const blob = new Blob([Parse.buildOpml(S.feeds)], { type: "text/x-opml" });
+    const a = el("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "reader-subscriptions.opml";
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  function applyShorts() { $("shorts-btn").textContent = "Shorts: " + (S.settings.hideShorts ? "Hidden" : "Shown"); }
+  $("shorts-btn").onclick = () => {
+    S.settings.hideShorts = !S.settings.hideShorts;
+    applyShorts();
+    saveSettings();
+    renderCounts();
+    renderList(true);
+  };
+
+  // ---------- Theme ----------
+
+  const THEMES = ["system", "light", "dark"];
+  function applyTheme() {
+    const t = S.settings.theme;
+    if (t === "system") document.documentElement.removeAttribute("data-theme");
+    else document.documentElement.dataset.theme = t;
+    $("theme-btn").textContent = "Theme: " + t.charAt(0).toUpperCase() + t.slice(1);
+    const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+    for (const m of document.querySelectorAll('meta[name="theme-color"]')) m.content = dark ? "#16171a" : "#f6f4ef";
+  }
+  $("theme-btn").onclick = () => {
+    S.settings.theme = THEMES[(THEMES.indexOf(S.settings.theme) + 1) % THEMES.length];
+    applyTheme();
+    saveSettings();
+  };
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+
+  // ---------- Status and toasts ----------
+
+  function status(msg, isError) {
+    const s = $("status");
+    s.hidden = !msg;
+    s.textContent = msg || "";
+    s.classList.toggle("error", !!isError);
+  }
+
+  let toastTimer = 0;
+  function toast(msg, action, onAction) {
+    const t = $("toast");
+    t.textContent = msg;
+    if (action) {
+      const b = el("button", null, action);
+      b.onclick = () => { onAction(); t.classList.remove("show"); };
+      t.append(b);
+    }
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), action ? 6000 : 3000);
+  }
+
+  // ---------- Events ----------
+
+  document.querySelector(".views").addEventListener("click", (e) => { const b = e.target.closest(".nav"); if (b) selectView(b.dataset.view); });
+  $("feeds").addEventListener("click", (e) => { const b = e.target.closest(".nav"); if (b) selectView(b.dataset.view); });
+  $("items").addEventListener("click", (e) => {
+    const li = e.target.closest(".post");
+    if (!li) return;
+    const it = S.items.get(li.dataset.key);
+    if (!it) return;
+    if (e.target.closest("a, .player")) return;   // links and the player handle themselves
+    const goto = e.target.closest("[data-view]");
+    if (goto) return selectView(goto.dataset.view);
+    const act = e.target.closest(".pact");
+    if (act) {
+      if (act.classList.contains("star")) setStar(it, !it.star);
+      else if (act.classList.contains("read")) setRead(it, !it.read);
+      else if (act.classList.contains("share")) share(it);
+      return;
+    }
+    const cell = e.target.closest(".pgallery .cell");
+    if (cell) return openLightbox(gallery(it), +cell.dataset.i);
+    if (e.target.closest(".pmedia.playable, .pmedia.audio")) return playInline(li, it);
+    openArticle(it.key);
+  });
+  $("top").addEventListener("click", (e) => { const b = e.target.closest("[data-view]"); if (b) selectView(b.dataset.view); });
+  $("items").addEventListener("keydown", (e) => { const li = e.target.closest(".post"); if (li && e.key === "Enter") openArticle(li.dataset.key); });
+  $("add-btn").onclick = openAddDialog;
+  $("menu-btn").onclick = openDrawer;
+  $("scrim").onclick = closeDrawer;
+  function refreshView() {
+    const feeds = S.view.startsWith("feed:") ? [feedById(S.view.slice(5))].filter(Boolean) : S.view.startsWith("group:") ? groupFeeds(S.view.slice(6)) : S.feeds;
+    if (!feeds.length) { endPull(); return openAddDialog(); }
+    refresh(feeds);
+  }
+  $("refresh-btn").onclick = refreshView;
+
+  // ---------- Pull to refresh (touch: pull down at the top; mouse / trackpad: keep scrolling up at the top) ----------
+  const PULL_AT = 64;
+  let pull = null, wheelPull = 0, wheelTimer = 0;
+  function setPull(px, settle) {
+    const ptr = $("ptr");
+    ptr.classList.toggle("settle", !!settle);
+    ptr.style.transform = "translate(-50%, " + (px - 48) + "px) rotate(" + (px * 4) + "deg)";
+    ptr.style.opacity = Math.min(1, px / PULL_AT);
+    ptr.classList.toggle("ready", px >= PULL_AT);
+  }
+  function startPullRefresh() {
+    $("ptr").classList.add("spinning");
+    setPull(PULL_AT - 8, true);
+    refreshView();
+  }
+  function endPull() { $("ptr").classList.remove("spinning", "ready"); setPull(0, true); }
+  const tl = $("timeline");
+  tl.addEventListener("touchstart", (e) => { pull = tl.scrollTop <= 0 && !S.refreshing ? { y: e.touches[0].clientY, d: 0 } : null; }, { passive: true });
+  tl.addEventListener("touchmove", (e) => {
+    if (!pull) return;
+    const d = e.touches[0].clientY - pull.y;
+    if (d <= 0 || tl.scrollTop > 0) { pull.d = 0; setPull(0); return; }
+    pull.d = Math.min(d * 0.5, 100);
+    setPull(pull.d);
+  }, { passive: true });
+  tl.addEventListener("touchend", () => {
+    if (!pull) return;
+    const go = pull.d >= PULL_AT;
+    pull = null;
+    if (go) startPullRefresh(); else setPull(0, true);
+  });
+  tl.addEventListener("wheel", (e) => {
+    if (tl.scrollTop > 0 || e.deltaY >= 0 || S.refreshing) { wheelPull = 0; return; }
+    wheelPull = Math.min(wheelPull + Math.min(-e.deltaY, 60) * 0.35, 100);
+    setPull(wheelPull);
+    clearTimeout(wheelTimer);
+    if (wheelPull >= 100) { wheelPull = 0; startPullRefresh(); return; }
+    wheelTimer = setTimeout(() => { wheelPull = 0; if (!S.refreshing) setPull(0, true); }, 350);
+  }, { passive: true });
+
+  // ---------- Read on scroll: a post you've seen and scrolled past counts as read ----------
+  const onScreen = new Set();
+  const readObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      const key = e.target.dataset.key;
+      // A post taken off the page (the timeline was redrawn) reports itself as gone: that's not scrolling past
+      if (!e.target.isConnected) continue;
+      if (e.isIntersecting) { onScreen.add(key); continue; }
+      if (!onScreen.has(key) || !S.settings.markOnScroll || !e.rootBounds) continue;
+      // Gone off the top (scrolled past), not off the bottom
+      if (e.boundingClientRect.bottom <= e.rootBounds.top + 2) setRead(S.items.get(key), true);
+    }
+  }, { root: $("timeline"), threshold: 0 });
+
+  function applyScrollRead() { $("scrollread-btn").textContent = "Read on scroll: " + (S.settings.markOnScroll ? "On" : "Off"); }
+  $("scrollread-btn").onclick = () => { S.settings.markOnScroll = !S.settings.markOnScroll; saveSettings(); applyScrollRead(); };
+  $("markall-btn").onclick = markAllRead;
+  $("unread-btn").onclick = () => { S.settings.unreadOnly = !S.settings.unreadOnly; saveSettings(); renderList(); };
+  $("back-btn").onclick = () => { if (history.state && history.state.article) history.back(); else closeArticle(); };
+  $("star-btn").onclick = () => { const it = S.items.get(S.current); if (it) setStar(it, !it.star); };
+  $("read-btn").onclick = () => { const it = S.items.get(S.current); if (it) setRead(it, !it.read); };
+
+  function showSearch(on) {
+    $("search-box").hidden = !on;
+    $("search-btn").setAttribute("aria-pressed", on);
+    if (on) { $("timeline").scrollTop = 0; $("search").focus(); }
+    else if (S.query) { $("search").value = ""; S.query = ""; renderList(); }
+  }
+  $("search-btn").onclick = () => showSearch($("search-box").hidden);
+  $("tabs").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    if (b.dataset.view) { if (b.dataset.view === S.view) $("timeline").scrollTo({ top: 0, behavior: "smooth" }); else selectView(b.dataset.view); }
+    else if (b.id === "tab-add") openAddDialog();
+    else if (b.id === "tab-feeds") openDrawer();
+  });
+
+  let searchTimer = 0;
+  $("search").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { S.query = e.target.value.trim(); renderList(); }, 150);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (!$("lightbox").hidden) {
+      if (e.key === "Escape") closeLightbox();
+      else if (e.key === "ArrowLeft") stepLightbox(-1);
+      else if (e.key === "ArrowRight") stepLightbox(1);
+      return;
+    }
+    if (e.target.closest("input, textarea, dialog") || e.metaKey || e.ctrlKey || e.altKey) {
+      if (e.key === "Escape" && e.target.id === "search") { showSearch(false); e.target.blur(); }
+      return;
+    }
+    const it = S.items.get(S.current);
+    switch (e.key) {
+      case "j": case "ArrowDown": if (e.key === "j" || document.body.classList.contains("reading")) { step(1); e.preventDefault(); } break;
+      case "k": case "ArrowUp": if (e.key === "k" || document.body.classList.contains("reading")) { step(-1); e.preventDefault(); } break;
+      case "s": if (it) setStar(it, !it.star); break;
+      case "m": if (it) setRead(it, !it.read); break;
+      case "o": case "v": if (it && it.link) window.open(it.link, "_blank", "noopener"); break;
+      case "r": $("refresh-btn").click(); break;
+      case "a": openAddDialog(); e.preventDefault(); break;
+      case "/": showSearch(true); e.preventDefault(); break;
+      case "Escape": if (document.body.classList.contains("drawer")) closeDrawer(); else if (document.body.classList.contains("reading")) $("back-btn").click(); break;
+    }
+  });
+
+  // Coming back to the app after a while counts as opening it again
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshStale(); });
+
+  // ---------- Start ----------
+
+  // X posts saved before video support don't know they're videos: work it out from their saved text
+  function upgradeSaved() {
+    for (const f of S.feeds) {
+      if (!f.x) continue;
+      const old = [...S.items.values()].filter(it => it.feedId === f.id && !it.video && /(Video|Gif)\s*(<br>\s*)?<img|amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb/i.test(it.html || ""));
+      if (!old.length) continue;
+      Parse.xify({ items: old }, f.x);
+      saveItems(old);
+    }
+  }
+
+  async function start() {
+    try {
+      const [feeds, settings, items] = await Promise.all([Store.get("feeds"), Store.get("settings"), Store.allItems()]);
+      S.feeds = feeds || [];
+      S.settings = { ...S.settings, ...(settings || {}) };
+      // Settings saved before "read posts leave on refresh" existed: turn the new behaviour on once
+      if ((S.settings.v || 0) < 2) { S.settings.unreadOnly = true; S.settings.markOnScroll = true; S.settings.v = 2; saveSettings(); }
+      for (const it of items) S.items.set(it.key, it);
+      upgradeSaved();
+    } catch (e) {
+      status("This browser won't let Reader save anything (private mode?). Feeds will be forgotten when you close it.", true);
+    }
+    applyTheme();
+    applyShorts();
+    applyScrollRead();
+    applyInvidious();
+    renderFeeds();
+    renderList();
+    refreshStale();
+    if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+  start();
+})();
