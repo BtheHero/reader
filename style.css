@@ -505,3 +505,6 @@ a.pname:hover { text-decoration: underline; }
 .qmedia .play { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, .62); color: #fff; font-size: 17px; padding-left: 3px; }
 .article .quote { margin: 22px 0 0; font-family: var(--sans); }
 .quote { cursor: pointer; }
+
+/* Hold-press for the account menu: no text selection or link callout */
+[data-xh] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }

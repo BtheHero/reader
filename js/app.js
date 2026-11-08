@@ -498,8 +498,12 @@
       const mute = words(r.mute), only = words(r.only);
       if (mute.length || only.length || r.noReposts || r.noReplies || r.mediaOnly) rules.set(f.id, { ...r, mute, only });
     }
+    const blocked = new Set((S.settings.xBlocked || []).map(h => h.toLowerCase()));
+    const xFeeds = new Set(S.feeds.filter(f => f.x).map(f => f.id));
     return (it) => {
       if (hiddenShort(it)) return true;
+      // Blocked X accounts: their reposts and the posts quoting them are hidden
+      if (blocked.size && xFeeds.has(it.feedId) && ((isRepost(it) && blocked.has(repostOf(it).toLowerCase())) || (it.quote && blocked.has((it.quote.handle || "").toLowerCase())))) return true;
       const r = rules.get(it.feedId);
       if (!r) return false;
       if (r.noReposts && isRepost(it)) return true;
@@ -875,7 +879,7 @@
     const rp = f.x && isRepost(it) ? repostOf(it) : null;
     const prof = rp ? xProfile(rp) : null;
     const name = rp ? el("a", "pname", prof && prof.name ? prof.name : "@" + rp) : el("button", "pname", f.title);
-    if (rp) { name.href = "https://x.com/" + rp; name.target = "_blank"; name.rel = "noopener noreferrer"; }
+    if (rp) { name.href = "https://x.com/" + rp; name.target = "_blank"; name.rel = "noopener noreferrer"; name.dataset.xh = rp; }
     else { name.type = "button"; name.dataset.view = "feed:" + f.id; }
     const time = el("time", null, ago(it.date));
     time.dateTime = new Date(it.date).toISOString();
@@ -890,7 +894,7 @@
     sub.append(time);
     who.append(name, sub);
     let face = avatar(rp ? repostFeed(rp, prof) : f);
-    if (rp) { const a = el("a", "rpface"); a.href = "https://x.com/" + rp; a.target = "_blank"; a.rel = "noopener noreferrer"; a.append(face); face = a; }
+    if (rp) { const a = el("a", "rpface"); a.href = "https://x.com/" + rp; a.target = "_blank"; a.rel = "noopener noreferrer"; a.dataset.xh = rp; a.append(face); face = a; }
     else face.dataset.view = "feed:" + f.id;
     head.append(face, who, el("span", "udot"));
     li.append(head);
@@ -1169,6 +1173,7 @@
       src.append(avatar(repostFeed(rpOf, pr || { name: nm })), el("span", null, nm));
     } else src.append(avatar(f), el("span", null, f.title));
     src.href = rpOf ? "https://x.com/" + rpOf : f.siteUrl || it.link || "#";
+    if (rpOf) src.dataset.xh = rpOf;
     src.target = "_blank";
     src.rel = "noopener noreferrer";
     const h = el("h1");
@@ -1899,6 +1904,7 @@
     card.setAttribute("aria-label", "Open the quoted post");
     const prof = q.handle ? xProfile(q.handle) : null;
     const head = el("div", "qhead");
+    if (q.handle) head.dataset.xh = q.handle;
     head.append(avatar(repostFeed(q.handle, prof && prof.icon ? { ...prof, name: q.name || prof.name } : { name: q.name || q.handle }), "qav"),
       el("b", null, q.name || (prof && prof.name) || "@" + q.handle), el("span", null, "@" + q.handle));
     card.append(head);
@@ -1915,6 +1921,81 @@
     }
     return card;
   }
+
+  // ---------- Hold-press on a reposted or quoted account: follow it, or block it ----------
+  // Blocking hides that account's reposts and the posts quoting it, everywhere. Unblock from the menu.
+  let holdTimer = 0, holdAt = null, heldUntil = 0, menuOpen = false;
+  const xFollowed = (h) => S.feeds.find(f => f.x && f.x.toLowerCase() === h.toLowerCase());
+
+  async function accountMenu(h) {
+    if (menuOpen) return;
+    menuOpen = true;
+    heldUntil = Date.now() + 800;      // the click that ends the hold doesn't open the link
+    const prof = xProfile(h), followed = xFollowed(h);
+    const blocked = (S.settings.xBlocked || []).some(b => b.toLowerCase() === h.toLowerCase());
+    const r = await ask({ title: prof && prof.name ? prof.name : "@" + h, text: "@" + h + (followed ? " · You follow this account" : ""),
+      ok: followed ? "Open feed" : "Follow", extra: blocked ? "Unblock" : "Block" });
+    menuOpen = false;
+    if (r.action === "ok") {
+      if (followed) return selectView("feed:" + followed.id);
+      toast("Following @" + h + "…");
+      try {
+        const [found] = await lookupX(h);
+        $("add-group").value = ""; $("add-podcast").checked = false;
+        await addFeed(found.url, found.parsed, found.x);
+      } catch (e) { toast(e.message || "Couldn't follow @" + h); }
+    } else if (r.action === "extra") setBlocked(h, !blocked);
+  }
+
+  function setBlocked(h, on) {
+    const list = (S.settings.xBlocked || []).filter(b => b.toLowerCase() !== h.toLowerCase());
+    if (on) list.push(h);
+    if (list.length) S.settings.xBlocked = list; else delete S.settings.xBlocked;
+    saveSettings();
+    applyBlocked();
+    renderCounts();
+    renderList(true);
+    if (on) toast("Blocked @" + h + ": their reposts and quotes are hidden", "Undo", () => setBlocked(h, false));
+    else toast("Unblocked @" + h);
+  }
+
+  const heldTarget = (e) => e.target.closest && e.target.closest("[data-xh]");
+  document.addEventListener("pointerdown", (e) => {
+    const t = heldTarget(e);
+    clearTimeout(holdTimer);
+    if (!t || e.button > 0) return;
+    holdAt = { x: e.clientX, y: e.clientY };
+    holdTimer = setTimeout(() => accountMenu(t.dataset.xh), 550);
+  });
+  document.addEventListener("pointermove", (e) => { if (holdAt && Math.hypot(e.clientX - holdAt.x, e.clientY - holdAt.y) > 10) { clearTimeout(holdTimer); holdAt = null; } });
+  for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => { clearTimeout(holdTimer); holdAt = null; });
+  // A long-press on a phone, or a right-click
+  document.addEventListener("contextmenu", (e) => { const t = heldTarget(e); if (!t) return; e.preventDefault(); clearTimeout(holdTimer); accountMenu(t.dataset.xh); });
+  document.addEventListener("click", (e) => { if (Date.now() < heldUntil && heldTarget(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
+
+  // Blocked accounts, from the menu: untick to unblock
+  function applyBlocked() { const n = (S.settings.xBlocked || []).length; $("blocked-btn").textContent = "Blocked accounts: " + (n || "None"); }
+  $("blocked-btn").onclick = () => {
+    const box = $("blocked-choices");
+    box.textContent = "";
+    const list = S.settings.xBlocked || [];
+    $("blocked-none").hidden = !!list.length;
+    for (const h of list) {
+      const l = el("label", "check"), c = el("input");
+      c.type = "checkbox"; c.value = h; c.checked = true;
+      l.append(c, " @" + h);
+      box.append(l);
+    }
+    $("blocked-dialog").showModal();
+  };
+  $("blocked-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const keep = [...$("blocked-choices").querySelectorAll("input:checked")].map(c => c.value);
+    if (keep.length) S.settings.xBlocked = keep; else delete S.settings.xBlocked;
+    saveSettings(); applyBlocked(); renderCounts(); renderList(true);
+    $("blocked-dialog").close();
+  });
+  $("blocked-cancel").onclick = () => $("blocked-dialog").close();
 
   // The quoted post on its own, in the reading view: its account, full text, pictures, and its video playing
   // in Reader's player. It's shown, never saved.
@@ -2492,7 +2573,7 @@
     async setSettings(s) {
       S.settings = s;
       await saveSettings();
-      applyTheme(); applyShorts(); applyScrollRead(); applyPreviews(); applyInvidious(); applyYtKey();
+      applyTheme(); applyShorts(); applyScrollRead(); applyPreviews(); applyInvidious(); applyYtKey(); applyBlocked();
       renderCounts();
       renderList(true);
     },
@@ -2560,6 +2641,7 @@
     applyShorts();
     applyScrollRead();
     applyPreviews();
+    applyBlocked();
     applyInvidious();
     applyYtKey();
     renderFeeds();

@@ -46,6 +46,7 @@
       <button class="link" id="shorts-btn">Shorts: Shown</button>
       <button class="link" id="scrollread-btn">Read on scroll: On</button>
       <button class="link" id="previews-btn">Previews: Off</button>
+      <button class="link" id="blocked-btn">Blocked accounts: None</button>
       <button class="link" id="ytkey-btn">YouTube API key: Off</button>
       <button class="link" id="invidious-btn">YouTube fallback: Off</button>
       <input type="file" id="import-file" accept=".opml,.xml,text/xml,application/xml" hidden>
@@ -172,6 +173,19 @@
     <div id="groups-choices" class="choices"></div>
     <div class="actions">
       <button type="button" class="btn" id="groups-cancel">Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="blocked-dialog">
+  <form method="dialog" id="blocked-form">
+    <h2>Blocked accounts</h2>
+    <p>Their reposts, and posts quoting them, are hidden. Untick an account to unblock it. To block one, hold-press a reposted or quoted account.</p>
+    <p id="blocked-none">No blocked accounts.</p>
+    <div id="blocked-choices" class="choices"></div>
+    <div class="actions">
+      <button type="button" class="btn" id="blocked-cancel">Cancel</button>
       <button type="submit" class="btn primary">Save</button>
     </div>
   </form>
