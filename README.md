@@ -169,7 +169,7 @@ Same code, and updates to the site reach the app without a new Play Store releas
 
 ## Android app (android/)
 
-A small native app (Kotlin) that shows the live site in a full-screen WebView, so site updates reach it without
+A small native app (Java) that shows the live site in a full-screen WebView, so site updates reach it without
 a new build, and adds what a website can't do:
 
 - **Ad blocking**: every request from the page and from the embedded YouTube / X players is checked against a list
