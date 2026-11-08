@@ -490,3 +490,17 @@ a.pname { color: var(--text); text-decoration: none; }
 a.pname:hover { text-decoration: underline; }
 .rpface { display: inline-flex; flex: none; }
 .article header .repost { margin: 0 0 8px; }
+
+/* Quoted X posts */
+.quote { display: block; margin-top: 10px; border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; color: var(--text); text-decoration: none; background: var(--bg); }
+.quote:hover { border-color: var(--faint); }
+.qhead { display: flex; align-items: center; gap: 7px; font-size: 14px; min-width: 0; }
+.qhead .av.qav { width: 22px; height: 22px; font-size: 11px; }
+.qhead b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qhead span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qtext { margin: 6px 0 0; font-size: 14.5px; line-height: 1.45; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.quote.full .qtext { -webkit-line-clamp: unset; display: block; font-size: 16px; }
+.qmedia { position: relative; margin-top: 8px; border-radius: 10px; overflow: hidden; aspect-ratio: 16 / 9; background: var(--hover); }
+.qmedia img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.qmedia .play { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: rgba(0, 0, 0, .62); color: #fff; font-size: 17px; padding-left: 3px; }
+.article .quote { margin: 22px 0 0; font-family: var(--sans); }

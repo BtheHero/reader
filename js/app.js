@@ -135,10 +135,10 @@
       if (old && old.video && p.video && old.video.id === p.video.id && old.video.ytOnly) p.video = { ...p.video, ytOnly: true };
       const it = { key, feedId: feed.id, id: p.id, title: p.title, link: p.link, date, author: p.author, html: p.html, image: p.image, video: p.video || null,
         read: old ? old.read : false, readAt: old ? old.readAt || 0 : 0, star: old ? old.star : false, seen: old ? old.seen : now,
-        pos: old ? old.pos || 0 : 0, dur: old ? old.dur || 0 : 0, watched: old ? !!old.watched : false };
+        pos: old ? old.pos || 0 : 0, dur: old ? old.dur || 0 : 0, watched: old ? !!old.watched : false, quote: p.quote || null };
       if (old && old.ytDur != null) { it.ytDur = old.ytDur; it.ytLive = old.ytLive; }
       if (!old) { added++; if (S.newKeys) S.newKeys.add(key); }
-      if (!old || old.title !== it.title || old.html !== it.html || old.date !== it.date || old.image !== it.image || JSON.stringify(old.video || null) !== JSON.stringify(it.video)) {
+      if (!old || old.title !== it.title || old.html !== it.html || old.date !== it.date || old.image !== it.image || JSON.stringify(old.video || null) !== JSON.stringify(it.video) || JSON.stringify(old.quote || null) !== JSON.stringify(it.quote)) {
         S.items.set(key, it); changed.push(it);
       }
     });
@@ -932,6 +932,8 @@
       li.append(box);
     }
 
+    if (it.quote) li.append(quoteEl(it, false));
+
     const acts = el("div", "pactions");
     const star = actionBtn("star", "star", it.star ? "Unstar" : "Star");
     star.setAttribute("aria-pressed", it.star);
@@ -1190,6 +1192,7 @@
     if (it.video) linkTimestamps(content);
     if (!Parse.plain(clean).length && !content.querySelector("img") && !it.video) content.append(el("p", "muted", "This feed only shares a headline."));
     art.append(head, content);
+    if (it.quote) art.append(quoteEl(it, true));
     if (it.link) {
       const more = el("a", "btn readmore", (it.video && it.video.kind === "youtube" ? "Watch on " : "Read on ") + (host(it.link) || "the site"));
       more.href = it.link; more.target = "_blank"; more.rel = "noopener noreferrer";
@@ -1880,6 +1883,32 @@
     return p && !p.failed ? p : null;
   }
 
+  // A quoted post, framed like on X: its account (picture, name, @handle), text and picture or video.
+  // The whole card opens the quoted post on X.
+  function quoteEl(it, full) {
+    const q = it.quote;
+    const card = el("a", "quote" + (full ? " full" : ""));
+    card.href = q.id ? "https://x.com/" + q.handle + "/status/" + q.id : "https://x.com/" + q.handle;
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+    const prof = q.handle ? xProfile(q.handle) : null;
+    const head = el("div", "qhead");
+    head.append(avatar(repostFeed(q.handle, prof && prof.icon ? { ...prof, name: q.name || prof.name } : { name: q.name || q.handle }), "qav"),
+      el("b", null, q.name || (prof && prof.name) || "@" + q.handle), el("span", null, "@" + q.handle));
+    card.append(head);
+    const text = Parse.plain(q.html, full ? 2000 : 400);
+    if (text) card.append(el("p", "qtext", text));
+    if (q.image) {
+      const box = el("div", "qmedia");
+      const img = el("img"); img.src = q.image; img.alt = ""; img.loading = "lazy"; img.referrerPolicy = "no-referrer";
+      img.onerror = () => box.remove();
+      box.append(img);
+      if (q.video) box.append(el("span", "play", "▶"));
+      card.append(box);
+    }
+    return card;
+  }
+
   async function lookupProfiles() {
     if (xpBusy || !xpWanted.size) return;
     xpBusy = true;
@@ -2392,6 +2421,13 @@
 
   // X posts saved before video support don't know they're videos: work it out from their saved text
   function upgradeSaved() {
+    for (const f of S.feeds) {
+      if (!f.x) continue;
+      const quoted = [...S.items.values()].filter(it => it.feedId === f.id && !it.quote && /<hr\s*\/?>\s*<blockquote>/i.test(it.html || ""));
+      if (!quoted.length) continue;
+      Parse.xify({ items: quoted }, f.x);
+      saveItems(quoted);
+    }
     let renamed = false;
     for (const f of S.feeds) {
       if (f.x && !f.customTitle && Parse.xName(f.title) && Parse.xName(f.title) !== f.title) { f.title = Parse.xName(f.title); renamed = true; }

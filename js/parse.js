@@ -303,6 +303,31 @@ const Parse = (() => {
         const origin = "https?://" + server[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "/";
         it.html = it.html.replace(new RegExp(origin + "t\\.co/", "g"), "https://t.co/").replace(new RegExp(origin + "(?!pic/|video/)", "g"), "https://x.com/");
       }
+      // A quoted post: Nitter appends it as <hr/><blockquote><b>Name (@handle)</b><p>…</p><footer>…/handle/status/ID</footer>
+      // </blockquote>. Keep it apart, so the post's own text, pictures and video are only its own.
+      const q = /<hr\s*\/?>\s*<blockquote>([\s\S]*?)<\/blockquote>\s*$/i.exec(it.html || "");
+      if (q) {
+        const inner = q[1];
+        const who = /<b>([\s\S]*?)\s*\(@([A-Za-z0-9_]{1,15})\)\s*<\/b>/.exec(inner);
+        const cite = /\/([A-Za-z0-9_]{1,15})\/status\/(\d+)/.exec((/<footer>([\s\S]*?)<\/footer>/i.exec(inner) || [])[1] || "");
+        let qhtml = inner.replace(/<b>[\s\S]*?<\/b>/, "").replace(/<footer>[\s\S]*?<\/footer>/i, "").trim();
+        const qvid = /<a[^>]*>\s*(?:<br>\s*)?(Video|Gif)\s*(?:<br>\s*)?(<img[^>]*>)\s*<\/a>/i.exec(qhtml);
+        let qthumb = "";
+        if (qvid) { qhtml = qhtml.replace(qvid[0], ""); qthumb = (/src="([^"]+)"/.exec(qvid[2]) || [])[1] || ""; }
+        const qimgs = images(qhtml, "https://x.com/");
+        it.quote = {
+          name: who ? decodeEntities(who[1]).trim() : "",
+          handle: who ? who[2] : cite ? cite[1] : "",
+          id: cite ? cite[2] : "",
+          html: qhtml,
+          image: qthumb || qimgs[0] || "",
+          video: !!qvid
+        };
+        it.html = it.html.slice(0, q.index);
+        // The quote's picture or video belongs to the quote
+        it.image = firstImage(it.html, it.link);
+        if (it.video && it.video.kind === "x" && !/(Video|Gif)\s*(<br>\s*)?<img|amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb/i.test(it.html)) delete it.video;
+      }
       it.id = "x:" + m[2];
       it.link = "https://x.com/" + m[1] + "/status/" + m[2];
       // Nitter marks video / GIF posts with a linked thumbnail labelled "Video" or "Gif" (the feed has no video file):
