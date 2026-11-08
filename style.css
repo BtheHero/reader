@@ -484,3 +484,9 @@ body.podding .toast { bottom: calc(110px + env(safe-area-inset-bottom)); }
 @media (max-width: 759px) { .gchips { padding-left: 14px; padding-right: 14px; } }
 .article header.micro { margin-bottom: 14px; }
 .article header.micro .byline { margin-top: 6px; }
+
+/* Reposts: the original account in the header */
+a.pname { color: var(--text); text-decoration: none; }
+a.pname:hover { text-decoration: underline; }
+.rpface { display: inline-flex; flex: none; }
+.article header .repost { margin: 0 0 8px; }

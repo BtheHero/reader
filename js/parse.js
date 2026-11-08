@@ -288,8 +288,12 @@ const Parse = (() => {
 
   // A Nitter feed made server-independent: posts are keyed by their X post id and link to x.com,
   // so switching to another Nitter server later doesn't duplicate anything.
+  // Nitter titles feeds "Name / @handle": keep just the name
+  const xName = (title) => String(title || "").replace(/\s*\/\s*@[A-Za-z0-9_]{1,15}\s*$/, "").trim();
+
   function xify(parsed, user) {
     parsed.siteUrl = "https://x.com/" + user;
+    if (parsed.title) parsed.title = xName(parsed.title) || parsed.title;
     for (const it of parsed.items) {
       const m = /\/([A-Za-z0-9_]{1,15})\/status\/(\d+)/.exec(it.link || it.id || "");
       if (!m) continue;
@@ -486,5 +490,5 @@ const Parse = (() => {
     return { src, gif: video.classList.contains("gif") };
   }
 
-  return { parseFeed, images, nitterVideo, discover, redditFeed, redditify, isReddit, youtubeFeed, youtubeVideo, xUser, xify, guesses, sanitize, plain, escapeHtml, parseOpml, buildOpml, absolute };
+  return { xName, parseFeed, images, nitterVideo, discover, redditFeed, redditify, isReddit, youtubeFeed, youtubeVideo, xUser, xify, guesses, sanitize, plain, escapeHtml, parseOpml, buildOpml, absolute };
 })();

@@ -871,14 +871,17 @@
 
     const head = el("div", "phead");
     const who = el("div", "who");
-    const name = el("button", "pname", f.title);
-    name.type = "button";
-    name.dataset.view = "feed:" + f.id;
+    // A repost: the original account's picture, name and handle, with "↻ @you-follow reposted" above
+    const rp = f.x && isRepost(it) ? repostOf(it) : null;
+    const prof = rp ? xProfile(rp) : null;
+    const name = rp ? el("a", "pname", prof && prof.name ? prof.name : "@" + rp) : el("button", "pname", f.title);
+    if (rp) { name.href = "https://x.com/" + rp; name.target = "_blank"; name.rel = "noopener noreferrer"; }
+    else { name.type = "button"; name.dataset.view = "feed:" + f.id; }
     const time = el("time", null, ago(it.date));
     time.dateTime = new Date(it.date).toISOString();
     time.title = new Date(it.date).toLocaleString();
     const sub = el("span", "psub");
-    const handle = f.x ? (/^@\w+$/.test(it.author || "") ? it.author : "@" + f.x) : it.author && it.author !== f.title ? it.author : "";
+    const handle = rp ? "@" + rp : f.x ? (/^@\w+$/.test(it.author || "") ? it.author : "@" + f.x) : it.author && it.author !== f.title ? it.author : "";
     if (f.x && isRepost(it)) {
       const rp = el("div", "repost", "↻ @" + f.x + " reposted");
       li.append(rp);
@@ -886,8 +889,9 @@
     if (handle) sub.append(el("span", "handle", handle), el("span", "dot", "·"));
     sub.append(time);
     who.append(name, sub);
-    const face = avatar(f);
-    face.dataset.view = "feed:" + f.id;
+    let face = avatar(rp ? repostFeed(rp, prof) : f);
+    if (rp) { const a = el("a", "rpface"); a.href = "https://x.com/" + rp; a.target = "_blank"; a.rel = "noopener noreferrer"; a.append(face); face = a; }
+    else face.dataset.view = "feed:" + f.id;
     head.append(face, who, el("span", "udot"));
     li.append(head);
 
@@ -1153,8 +1157,13 @@
     } else if (it.video) art.append(playerFor(it));
     const head = el("header");
     const src = el("a", "src");
-    src.append(avatar(f), el("span", null, f.title));
-    src.href = f.siteUrl || it.link || "#";
+    const rpOf = f.x && isRepost(it) ? repostOf(it) : null;
+    if (rpOf) {
+      const pr = xProfile(rpOf);
+      head.append(el("div", "repost", "↻ @" + f.x + " reposted"));
+      src.append(avatar(repostFeed(rpOf, pr)), el("span", null, pr && pr.name ? pr.name : "@" + rpOf));
+    } else src.append(avatar(f), el("span", null, f.title));
+    src.href = rpOf ? "https://x.com/" + rpOf : f.siteUrl || it.link || "#";
     src.target = "_blank";
     src.rel = "noopener noreferrer";
     const h = el("h1");
@@ -1855,6 +1864,41 @@
   $("pb-seek").addEventListener("input", () => { podDragging = true; if (Pod.dur) $("pb-time").textContent = hms($("pb-seek").value / 1000 * Pod.dur); });
   $("pb-seek").addEventListener("change", () => { podDragging = false; if (Pod.dur) podSeek($("pb-seek").value / 1000 * Pod.dur); });
 
+  // ---------- Reposted X accounts ----------
+  // The feed only names a repost's original account by @handle. Its name and picture come from that account's
+  // own Nitter feed: looked up once, all at once, and kept for a week (a failed lookup is retried after a day).
+  const XP = new Map();          // handle (lower case) -> { name, icon, at, failed }
+  const xpWanted = new Set();
+  let xpTimer = 0, xpBusy = false;
+  const repostOf = (it) => { const m = /^RT @([A-Za-z0-9_]{1,15})/.exec(it.title || "") || /^@([A-Za-z0-9_]{1,15})$/.exec(it.author || ""); return m ? m[1] : ""; };
+  const repostFeed = (handle, prof) => ({ title: prof && prof.name ? prof.name : handle, icon: prof && prof.icon, siteUrl: "https://x.com/" + handle, url: "https://x.com/" + handle });
+
+  function xProfile(handle) {
+    const p = XP.get(handle.toLowerCase());
+    const fresh = p && Date.now() - p.at < (p.failed ? 86400000 : 7 * 86400000);
+    if (!fresh) { xpWanted.add(handle); clearTimeout(xpTimer); xpTimer = setTimeout(lookupProfiles, 300); }
+    return p && !p.failed ? p : null;
+  }
+
+  async function lookupProfiles() {
+    if (xpBusy || !xpWanted.size) return;
+    xpBusy = true;
+    const handles = [...xpWanted].slice(0, 40);
+    handles.forEach(h => xpWanted.delete(h));
+    try {
+      const hosts = await nitterHosts();
+      const urls = handles.map((h, i) => "https://" + hosts[i % Math.min(3, hosts.length)] + "/" + h + "/rss");
+      const results = await fetchBatch(urls);
+      results.forEach((r, i) => {
+        const parsed = r.ok && Parse.parseFeed(r.body, urls[i]);
+        XP.set(handles[i].toLowerCase(), parsed ? { name: Parse.xName(parsed.title) || "@" + handles[i], icon: parsed.icon || "", at: Date.now() } : { failed: true, at: Date.now() });
+      });
+      Store.set("xprofiles", Object.fromEntries(XP));
+      renderList(true);
+    } catch (e) { /* offline: try again next time */ }
+    finally { xpBusy = false; if (xpWanted.size) xpTimer = setTimeout(lookupProfiles, 300); }
+  }
+
   // ---------- Views / navigation ----------
 
   function selectView(view) {
@@ -2348,6 +2392,11 @@
 
   // X posts saved before video support don't know they're videos: work it out from their saved text
   function upgradeSaved() {
+    let renamed = false;
+    for (const f of S.feeds) {
+      if (f.x && !f.customTitle && Parse.xName(f.title) && Parse.xName(f.title) !== f.title) { f.title = Parse.xName(f.title); renamed = true; }
+    }
+    if (renamed) { S.feeds.sort((a, b) => a.title.localeCompare(b.title)); saveFeeds(); }
     for (const f of S.feeds) {
       if (!f.x) continue;
       const old = [...S.items.values()].filter(it => it.feedId === f.id && !it.video && /(Video|Gif)\s*(<br>\s*)?<img|amplify_video_thumb|ext_tw_video_thumb|tweet_video_thumb/i.test(it.html || ""));
@@ -2434,6 +2483,7 @@
       // Settings saved before "read posts leave on refresh" existed: turn the new behaviour on once
       if ((S.settings.v || 0) < 2) { S.settings.unreadOnly = true; S.settings.markOnScroll = true; S.settings.v = 2; saveSettings(); }
       for (const it of items) S.items.set(it.key, it);
+      for (const [k, v] of Object.entries((await Store.get("xprofiles")) || {})) XP.set(k, v);
       upgradeSaved();
     } catch (e) {
       status("This browser won't let Reader save anything (private mode?). Feeds will be forgotten when you close it.", true);
