@@ -16,7 +16,7 @@
 
 const MAX_URLS = 45;                 // per call; under the free plan's 50 subrequests
 const CACHE_SECONDS = 600;           // how long Cloudflare keeps a copy of each feed
-const TIMEOUT_MS = 10000;            // give up on a slow feed after this
+const TIMEOUT_MS = 8000;             // give up on a slow feed after this
 const MAX_BYTES = 3 * 1024 * 1024;   // ignore anything bigger (no real feed is this big)
 
 export async function onRequestPost({ request }) {
@@ -25,10 +25,20 @@ export async function onRequestPost({ request }) {
   const origin = request.headers.get("Origin");
   if (origin && new URL(origin).host !== new URL(request.url).host) return json({ error: "Forbidden" }, 403);
 
-  let urls;
-  try { ({ urls } = await request.json()); } catch (e) { return json({ error: "Expected JSON" }, 400); }
+  let urls, stream;
+  try { ({ urls, stream } = await request.json()); } catch (e) { return json({ error: "Expected JSON" }, 400); }
   if (!Array.isArray(urls) || !urls.length) return json({ error: "No urls" }, 400);
   if (urls.length > MAX_URLS) return json({ error: "At most " + MAX_URLS + " urls per call" }, 400);
+
+  // { stream: true }: answer one line per feed ({ i, ...result }) as soon as that feed is in, so the reader
+  // can show fast feeds without waiting for the slowest one. Still one request for the whole batch.
+  if (stream) {
+    const { readable, writable } = new TransformStream();
+    const out = writable.getWriter(), enc = new TextEncoder();
+    Promise.all(urls.map((u, i) => fetchOne(u).then(r => out.write(enc.encode(JSON.stringify({ i, ...r }) + "\n")))))
+      .finally(() => out.close());
+    return new Response(readable, { headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" } });
+  }
 
   const results = await Promise.all(urls.map(fetchOne));
   return json({ results });

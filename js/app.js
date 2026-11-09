@@ -51,23 +51,45 @@
   // the same Atom feed YouTube would have sent, so everything else works unchanged.
   const YT_FEED = /^https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?(channel_id|playlist_id)=([\w-]+)/;
 
-  async function fetchBatch(urls) {
-    if (S.settings.ytKey && urls.some(u => YT_FEED.test(u))) {
-      const yt = urls.filter(u => YT_FEED.test(u)), rest = urls.filter(u => !YT_FEED.test(u));
-      const [a, b] = await Promise.all([Promise.all(yt.map(youtubeApiFeed)), rest.length ? fetchBatch(rest) : []]);
-      const got = new Map([...a, ...b].map(r => [r.url, r]));
-      return urls.map(u => got.get(u));
+  // Fetch feeds through the site's fetcher. Batches go out at the same time, and each feed is handed to
+  // onResult(index, result) as soon as it's in (the fetcher streams them), so one slow site holds up nothing.
+  async function fetchBatch(urls, onResult) {
+    const out = new Array(urls.length);
+    const done = (i, r) => { out[i] = r; if (onResult) onResult(i, r); };
+    const jobs = [], rest = [];
+    urls.forEach((u, i) => {
+      if (S.settings.ytKey && YT_FEED.test(u)) jobs.push(youtubeApiFeed(u).then(r => done(i, r)));
+      else rest.push(i);
+    });
+    for (let s = 0; s < rest.length; s += BATCH) {
+      const idx = rest.slice(s, s + BATCH);
+      jobs.push((async () => {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls: idx.map(i => urls[i]), stream: true })
+        });
+        if (!res.ok) throw new Error(res.status === 404 ? "The feed fetcher isn't available here (it runs on Cloudflare Pages)." : "The feed fetcher answered " + res.status);
+        if (!/ndjson/.test(res.headers.get("Content-Type") || "") || !res.body) {
+          (await res.json()).results.forEach((r, n) => done(idx[n], r));
+          return;
+        }
+        const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buf = "";
+        for (;;) {
+          const { value, done: end } = await reader.read();
+          if (value) buf += value;
+          let nl;
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+            if (line.trim()) { const r = JSON.parse(line); done(idx[r.i], r); }
+          }
+          if (end) break;
+        }
+      })());
     }
-    const out = [];
-    for (let i = 0; i < urls.length; i += BATCH) {
-      const res = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls: urls.slice(i, i + BATCH) })
-      });
-      if (!res.ok) throw new Error(res.status === 404 ? "The feed fetcher isn't available here (it runs on Cloudflare Pages)." : "The feed fetcher answered " + res.status);
-      out.push(...(await res.json()).results);
-    }
+    await Promise.all(jobs);
+    urls.forEach((u, i) => { if (!out[i]) out[i] = { url: u, ok: false, error: "No answer" }; });
     return out;
   }
 
@@ -156,64 +178,105 @@
     Store.deleteItems(drop);
   }
 
+  // A manual refresh shows feeds as they come in and stops waiting after this long: feeds still loading land
+  // quietly when they arrive (with the "N new posts" pill if you've scrolled down)
+  const REFRESH_WAIT = 4000;
+
   async function refresh(feeds, { quiet } = {}) {
     if (S.refreshing || !feeds.length) return;
     S.refreshing = true;
     S.newKeys = new Set();
     if (!quiet) status("Refreshing " + feeds.length + (feeds.length === 1 ? " feed…" : " feeds…"));
-    let added = 0, failed = 0;
-    try {
-      const results = await fetchBatch(feeds.map(f => f.url));
-      results.forEach((r, i) => {
+    let failed = 0, waiting = feeds.length, late = false, liveTimer = 0, settleTimer = 0, settle;
+    // ...or once all but a few stragglers (a tenth of the feeds) are in and a second has passed
+    const settled = new Promise(r => { settle = r; });
+    const stragglers = Math.floor(feeds.length / 10);
+    const retries = [];
+    // Show what's in so far (manual refresh, while you're at the top)
+    const live = () => {
+      if (quiet || late) return;
+      clearTimeout(liveTimer);
+      liveTimer = setTimeout(() => { if (S.refreshing && !late && $("timeline").scrollTop < 80 && !document.body.classList.contains("reading")) renderList(true); }, 200);
+    };
+    // An X account whose Nitter server failed: try it on other working servers straight away
+    const retryX = async (f) => {
+      const current = host(f.url);
+      const urls = (await nitterHosts()).filter(h => h !== current).slice(0, 3).map(h => "https://" + h + "/" + f.x + "/rss");
+      let moved = false;
+      await fetchBatch(urls, (i, r) => {
+        if (moved) return;
+        const parsed = r.ok && Parse.parseFeed(r.body, urls[i]);
+        if (!parsed) return;
+        moved = true;
+        f.url = urls[i];
+        apply(f, parsed);
+        live();
+      });
+      if (!moved) failed++;
+    };
+    const all = (async () => {
+      await fetchBatch(feeds.map(f => f.url), (i, r) => {
         const f = feeds[i];
+        waiting--;
+        if (waiting && waiting <= stragglers && !settleTimer) settleTimer = setTimeout(() => settle("late"), 1000);
         f.lastFetch = Date.now();
         const parsed = r.ok ? Parse.parseFeed(r.body, r.finalUrl || f.url) : null;
-        if (!parsed) { f.error = r.ok ? "This address no longer returns a feed" : YT_FEED.test(f.url) && !S.settings.ytKey ? YT_HELP : r.error; failed++; return; }
-        added += apply(f, parsed);
-      });
-      // X accounts whose Nitter server failed: move them to another working server
-      const xFailed = feeds.filter(f => f.x && f.error);
-      if (xFailed.length) {
-        const hosts = await nitterHosts();
-        const tries = [];
-        for (const f of xFailed) {
-          const current = host(f.url);
-          for (const h of hosts.filter(h => h !== current).slice(0, 3)) tries.push({ f, url: "https://" + h + "/" + f.x + "/rss" });
+        if (!parsed) {
+          f.error = r.ok ? "This address no longer returns a feed" : YT_FEED.test(f.url) && !S.settings.ytKey ? YT_HELP : r.error;
+          if (f.x) retries.push(retryX(f).catch(() => { failed++; })); else failed++;
+          return;
         }
-        const res = await fetchBatch(tries.map(t => t.url));
-        res.forEach((r, i) => {
-          const { f, url } = tries[i];
-          if (!f.error) return;   // an earlier server already worked
-          const parsed = r.ok && Parse.parseFeed(r.body, url);
-          if (!parsed) return;
-          f.url = url;
-          added += apply(f, parsed);
-          failed--;
-        });
-      }
+        apply(f, parsed);
+        live();
+      });
+      await Promise.all(retries);
+    })();
+    // Only posts that will actually show here count as new: not ones hidden by filters, blocks, hidden
+    // Shorts, other views, or feeds kept to their group
+    const visibleNew = (keys) => { const shown = new Set(viewItems().map(i => i.key)); return keys.filter(k => shown.has(k)).length; };
+
+    try {
+      const first = await Promise.race(quiet ? [all.then(() => "done")] : [all.then(() => "done"), settled, new Promise(r => setTimeout(r, REFRESH_WAIT, "late"))]);
+      late = first === "late" && waiting + retries.length > 0;
+      clearTimeout(settleTimer);
+      clearTimeout(liveTimer);
       saveFeeds();
       status("");
-      // Only posts that will actually show here count as new: not ones hidden by filters, blocks, hidden
-      // Shorts, other views, or feeds kept to their group
-      if (added) { const shown = new Set(viewItems().map(i => i.key)); added = [...S.newKeys].filter(k => shown.has(k)).length; }
+      const counted = [...S.newKeys];
+      const added = visibleNew(counted);
       const failNote = failed ? " · " + failed + " feed" + (failed === 1 ? "" : "s") + " failed" : "";
+      const lateNote = late ? " · " + Math.max(1, waiting) + " still loading" : "";
       if (S.view === "podcasts" && !quiet) {
         // Count new episodes only (videos over the channel's minimum length), once their lengths are known
         await podDurations();
         const pods = podFeeds();
-        const n = [...S.newKeys].map(k => S.items.get(k)).filter(i => i && pods.has(i.feedId) && isEpisode(i, pods.get(i.feedId))).length;
-        toast(n ? n + " new podcast" + (n === 1 ? "" : "s") : "No new podcasts" + failNote);
-      } else if (!quiet || added) toast(added ? added + " new post" + (added === 1 ? "" : "s") : "No new posts" + failNote);
-    } catch (e) {
-      status(navigator.onLine === false ? "You're offline. Showing saved articles." : e.message, true);
-    } finally {
-      S.refreshing = false;
+        const n = counted.map(k => S.items.get(k)).filter(i => i && pods.has(i.feedId) && isEpisode(i, pods.get(i.feedId))).length;
+        toast((n ? n + " new podcast" + (n === 1 ? "" : "s") : "No new podcasts") + failNote + lateNote);
+      } else if (!quiet || added) toast((added ? added + " new post" + (added === 1 ? "" : "s") : "No new posts") + failNote + lateNote);
       endPull();
-      podDurations();
       renderFeeds();
       if (!quiet) { S.keep.clear(); hideNewPill(); renderList(); }
       else if ($("timeline").scrollTop > 80 && !document.body.classList.contains("reading")) { if (added) showNewPill(added); }
       else renderList(true);
+      if (late) {
+        // The slow ones: when they're in, add them without moving what you're reading
+        const before = new Set(counted);
+        await all;
+        saveFeeds();
+        renderFeeds();
+        const more = visibleNew([...S.newKeys].filter(k => !before.has(k)));
+        if (more) {
+          if ($("timeline").scrollTop > 80 || document.body.classList.contains("reading")) showNewPill(more);
+          else renderList(true);
+        }
+      }
+    } catch (e) {
+      endPull();
+      renderFeeds();
+      status(navigator.onLine === false ? "You're offline. Showing saved articles." : e.message, true);
+    } finally {
+      S.refreshing = false;
+      podDurations();
     }
   }
 
