@@ -158,7 +158,7 @@
       const it = { key, feedId: feed.id, id: p.id, title: p.title, link: p.link, date, author: p.author, html: p.html, image: p.image, video: p.video || null,
         read: old ? old.read : false, readAt: old ? old.readAt || 0 : 0, star: old ? old.star : false, seen: old ? old.seen : now,
         pos: old ? old.pos || 0 : 0, dur: old ? old.dur || 0 : 0, watched: old ? !!old.watched : false, quote: p.quote || null };
-      if (old && old.ytDur != null) { it.ytDur = old.ytDur; it.ytLive = old.ytLive; }
+      if (old && old.ytDur != null) { it.ytDur = old.ytDur; it.ytLive = old.ytLive; it.ytState = old.ytState; it.ytChecked = old.ytChecked; }
       if (!old) { added++; if (S.newKeys) S.newKeys.add(key); }
       if (!old || old.title !== it.title || old.html !== it.html || old.date !== it.date || old.image !== it.image || JSON.stringify(old.video || null) !== JSON.stringify(it.video) || JSON.stringify(old.quote || null) !== JSON.stringify(it.quote)) {
         S.items.set(key, it); changed.push(it);
@@ -250,7 +250,7 @@
         // Count new episodes only (videos over the channel's minimum length), once their lengths are known
         await podDurations();
         const pods = podFeeds();
-        const n = counted.map(k => S.items.get(k)).filter(i => i && pods.has(i.feedId) && isEpisode(i, pods.get(i.feedId))).length;
+        const n = counted.map(k => S.items.get(k)).filter(i => i && pods.has(i.feedId) && isPodItem(i, pods.get(i.feedId))).length;
         toast((n ? n + " new podcast" + (n === 1 ? "" : "s") : "No new podcasts") + failNote + lateNote);
       } else if (!quiet || added) toast((added ? added + " new post" + (added === 1 ? "" : "s") : "No new posts") + failNote + lateNote);
       endPull();
@@ -531,7 +531,7 @@
       if (it.star) c.starred++;
       const pf = pods.get(it.feedId);
       if (pf) {
-        if (isEpisode(it, pf) && !it.read && !it.watched) { c.podcasts++; c.feeds[it.feedId] = (c.feeds[it.feedId] || 0) + 1; }
+        if (isPodItem(it, pf) && !it.read && !it.watched) { c.podcasts++; c.feeds[it.feedId] = (c.feeds[it.feedId] || 0) + 1; }
         continue;
       }
       if (!it.read && isVideo(it)) c.videos++;
@@ -757,7 +757,7 @@
     const hide = hider();
     let list = [...S.items.values()].filter(i => !hide(i));
     const pods = podFeeds();
-    if (S.view === "podcasts") list = list.filter(i => pods.has(i.feedId) && isEpisode(i, pods.get(i.feedId)) && (!S.settings.unreadOnly || !i.watched || S.keep.has(i.key) || (Pod.item && Pod.item.key === i.key)));
+    if (S.view === "podcasts") list = list.filter(i => pods.has(i.feedId) && isPodItem(i, pods.get(i.feedId)) && (!S.settings.unreadOnly || !i.watched || S.keep.has(i.key) || (Pod.item && Pod.item.key === i.key)));
     // Podcast channels' videos live in Podcasts (and on the channel's own page), not in the timelines
     else if (S.view !== "starred" && !S.view.startsWith("feed:")) list = list.filter(i => !pods.has(i.feedId));
     // Feeds set to "only in its group" stay off Home
@@ -786,6 +786,8 @@
   const groupOnlyFeeds = () => new Set(S.feeds.filter(f => f.groupOnly && f.group).map(f => f.id));
   const podFeeds = () => new Map(S.feeds.filter(f => f.podcast).map(f => [f.id, f]));
   // A podcast channel's video long enough to be an episode (lengths come from the YouTube API)
+  const isLiveNow = (it) => !!it.video && it.video.kind === "youtube" && it.ytState === "live";
+  const isPodItem = (it, f) => isEpisode(it, f) || isLiveNow(it);
   const isEpisode = (it, f) => !!it.video && it.video.kind === "youtube" && !it.ytLive && it.ytDur >= (f.podMin || 60) * 60;
   const hiddenShort = (it) => S.settings.hideShorts && it.video && it.video.short;
 
@@ -1284,13 +1286,13 @@
     stopPlayer();
     art.textContent = "";
     const pf = feedById(it.feedId);
-    const episode = pf && pf.podcast && isEpisode(it, pf);
+    const episode = pf && pf.podcast && isPodItem(it, pf);
     const noMedia = !!(f.filters && f.filters.textOnly) && !episode;     // a "Text only" source: no player either
     art.classList.toggle("has-video", !!it.video && !it.video.audio && !episode && !noMedia);
     if (episode) {
       const box = el("div", "podhead");
       const img = el("img", "podbig"); img.src = it.image || ""; img.alt = ""; img.referrerPolicy = "no-referrer";
-      const play = el("button", "btn primary podgo", Pod.item && Pod.item.key === it.key ? (Pod.playing ? "❚❚ Pause" : "▶ Resume") : it.pos > 5 && !it.watched ? "▶ Resume (" + length(Math.max(0, it.ytDur - it.pos)) + " left)" : "▶ Play episode · " + length(it.ytDur));
+      const play = el("button", "btn primary podgo", Pod.item && Pod.item.key === it.key ? (Pod.playing ? "❚❚ Pause" : "▶ Resume") : isLiveNow(it) ? "▶ Listen live" : it.pos > 5 && !it.watched ? "▶ Resume (" + length(Math.max(0, it.ytDur - it.pos)) + " left)" : "▶ Play episode · " + length(it.ytDur));
       play.onclick = () => { podPlay(it); setTimeout(() => { play.textContent = Pod.playing ? "❚❚ Pause" : "▶ Resume"; }, 600); };
       box.append(img, play);
       art.append(box);
@@ -1725,7 +1727,10 @@
   async function podDurations() {
     if (podBusy || !S.settings.ytKey) return;
     const pods = podFeeds();
-    const need = [...S.items.values()].filter(i => pods.has(i.feedId) && i.video && i.video.kind === "youtube" && i.ytDur == null);
+    // New videos, and streams that were live or scheduled when last checked (every 10 minutes, so a stream
+    // shows as LIVE when it starts, and its recording becomes an episode once it's over)
+    const need = [...S.items.values()].filter(i => pods.has(i.feedId) && i.video && i.video.kind === "youtube" &&
+      (i.ytDur == null || (i.ytLive && Date.now() - (i.ytChecked || 0) > 600000)));
     if (!need.length) return;
     podBusy = true;
     try {
@@ -1739,7 +1744,9 @@
         for (const it of chunk) {
           const v = got.get(it.video.id);
           it.ytDur = v ? isoSecs(v.contentDetails && v.contentDetails.duration) : 0;
-          it.ytLive = !!(v && v.snippet && v.snippet.liveBroadcastContent && v.snippet.liveBroadcastContent !== "none");
+          it.ytState = (v && v.snippet && v.snippet.liveBroadcastContent) || "none";
+          it.ytLive = it.ytState !== "none";
+          it.ytChecked = Date.now();
         }
         saveItems(chunk);
       }
@@ -1764,7 +1771,7 @@
     const name = el("button", "pname", f.title); name.type = "button"; name.dataset.view = "feed:" + f.id;
     src.append(name, el("span", "dot", "·"), el("time", null, ago(it.date)));
     const left = it.pos > 5 && !it.watched ? Math.max(0, (it.ytDur || it.dur) - it.pos) : 0;
-    const meta = el("div", "podmeta", it.watched ? "Played" : left ? length(left) + " left" : length(it.ytDur));
+    const meta = isLiveNow(it) ? el("div", "podmeta live", "● LIVE") : el("div", "podmeta", it.watched ? "Played" : left ? length(left) + " left" : length(it.ytDur));
     info.append(src, el("h3", "ptitle", it.title), meta);
     if (left && it.ytDur) { const bar = el("span", "podprog"); const fill = el("i"); fill.style.width = Math.min(100, it.pos / it.ytDur * 100) + "%"; bar.append(fill); info.append(bar); }
     const playing = Pod.item && Pod.item.key === it.key && Pod.playing;
@@ -1857,8 +1864,9 @@
     Pod.item = it;
     Pod.wantPlay = true;
     Pod.resumes = 0;
-    Pod.dur = it.ytDur || it.dur || 0;
-    const start = at != null ? at : !it.watched && it.pos > 5 && (!Pod.dur || it.pos < Pod.dur - 10) ? it.pos : 0;
+    Pod.live = isLiveNow(it);
+    Pod.dur = Pod.live ? 0 : it.ytDur || it.dur || 0;
+    const start = Pod.live ? 0 : at != null ? at : !it.watched && it.pos > 5 && (!Pod.dur || it.pos < Pod.dur - 10) ? it.pos : 0;
     Pod.time = start;
     const f = feedById(it.feedId) || { title: "" };
     $("pb-title").textContent = it.title;
@@ -1870,7 +1878,7 @@
     setRead(it, true);
     if (S.view === "podcasts") refreshPodRow(it);
     // Audio only from your own Invidious server; YouTube's player otherwise
-    const audio = S.settings.invidious ? await invidiousAudio(it.video.id) : "";
+    const audio = S.settings.invidious && !Pod.live ? await invidiousAudio(it.video.id) : "";
     if (Pod.item !== it) return;
     if (audio) podAudio(it, audio, start); else podYouTube(it, start);
   }
@@ -1965,6 +1973,7 @@
     const it = Pod.item;
     if (!it || !isFinite(t)) return;
     Pod.time = t;
+    if (Pod.live) { if (dur && isFinite(dur)) Pod.dur = dur; podUi(); return; }   // a live stream: nothing to remember
     if (dur && isFinite(dur)) Pod.dur = dur;
     it.pos = t;
     if (Pod.dur) it.dur = Pod.dur;
@@ -1975,6 +1984,8 @@
   function podEnded() {
     const it = Pod.item;
     if (!it) return;
+    // A live stream that ended: its recording turns up later as an episode, unplayed
+    if (Pod.live) { Pod.playing = false; Pod.wantPlay = false; podUi(); toast("The live stream has ended"); return; }
     it.watched = true;
     it.pos = 0;
     saveItems([it]);
@@ -2004,7 +2015,8 @@
 
   function podStop() {
     const it = Pod.item;
-    if (it) { it.pos = Pod.time; saveItems([it]); }
+    if (it && !Pod.live) { it.pos = Pod.time; saveItems([it]); }
+    Pod.live = false;
     clearInterval(Pod.timer);
     if (Pod.media) { Pod.media.pause(); Pod.media.removeAttribute("src"); Pod.media.load(); }
     Pod.media = Pod.frame = null;
@@ -2020,7 +2032,7 @@
     $("pb-play").innerHTML = Pod.playing ? '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg>';
     $("pb-play").setAttribute("aria-label", Pod.playing ? "Pause" : "Play");
     $("pb-time").textContent = hms(Pod.time);
-    $("pb-left").textContent = Pod.dur ? "-" + hms(Pod.dur - Pod.time) : "";
+    $("pb-left").textContent = Pod.live ? (Pod.dur && Pod.dur - Pod.time > 60 ? "-" + hms(Pod.dur - Pod.time) : "● LIVE") : Pod.dur ? "-" + hms(Pod.dur - Pod.time) : "";
     if (!podDragging) $("pb-seek").value = Pod.dur ? Math.round(Pod.time / Pod.dur * 1000) : 0;
     $("pb-rate").textContent = Pod.rate + "×";
     const row = Pod.item && document.querySelector('.post.pod[data-key="' + CSS.escape(Pod.item.key) + '"] .podplay');

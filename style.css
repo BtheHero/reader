@@ -699,3 +699,6 @@ body.podbig .timeline { padding-bottom: calc(52vh + 140px + env(safe-area-inset-
 .lightbox.zoomed img { cursor: grab; }
 .lightbox.zoomed .lb-prev, .lightbox.zoomed .lb-next, .lightbox.zoomed .lb-count { display: none; }
 .lightbox.dragging img { transition: none; }
+
+/* Live streams in Podcasts */
+.podmeta.live { color: #e11d48; font-weight: 700; letter-spacing: .02em; }
