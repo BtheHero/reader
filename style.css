@@ -692,3 +692,10 @@ body.podbig .timeline { padding-bottom: calc(52vh + 140px + env(safe-area-inset-
   body.podbig .timeline { padding-bottom: calc(56.25vw + 230px + env(safe-area-inset-bottom)); }
   body.podbig .toast { bottom: calc(56.25vw + 222px + env(safe-area-inset-bottom)); }
 }
+
+/* Picture viewer: pinch, double-tap or wheel to zoom, drag to look around */
+.lightbox { touch-action: none; }
+.lightbox img { transform-origin: center; transition: transform .12s ease-out; will-change: transform; cursor: zoom-in; }
+.lightbox.zoomed img { cursor: grab; }
+.lightbox.zoomed .lb-prev, .lightbox.zoomed .lb-next, .lightbox.zoomed .lb-count { display: none; }
+.lightbox.dragging img { transition: none; }

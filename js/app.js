@@ -1140,6 +1140,7 @@
     $("lb-close").focus();
   }
   function showLightbox() {
+    zoomTo(1);
     $("lb-img").src = LB.list[LB.i];
     $("lb-count").textContent = LB.list.length > 1 ? (LB.i + 1) + " / " + LB.list.length : "";
     $("lb-prev").hidden = LB.i === 0;
@@ -1154,23 +1155,88 @@
   function closeLightbox(fromHistory) {
     if ($("lightbox").hidden) return;
     $("lightbox").hidden = true;
+    zoomTo(1);
     $("lb-img").removeAttribute("src");
     if (!fromHistory && history.state && history.state.lightbox) { LB.closing = true; history.back(); }
   }
   $("lb-close").onclick = () => closeLightbox();
   $("lb-prev").onclick = (e) => { e.stopPropagation(); stepLightbox(-1); };
   $("lb-next").onclick = (e) => { e.stopPropagation(); stepLightbox(1); };
-  $("lightbox").addEventListener("click", (e) => { if (e.target === $("lightbox")) closeLightbox(); });
-  // Swipe left / right between pictures, down to close
-  let swipe = null;
-  $("lightbox").addEventListener("pointerdown", (e) => { swipe = { x: e.clientX, y: e.clientY }; });
-  $("lightbox").addEventListener("pointerup", (e) => {
-    if (!swipe) return;
-    const dx = e.clientX - swipe.x, dy = e.clientY - swipe.y;
-    swipe = null;
+  $("lightbox").addEventListener("click", (e) => { if (e.target === $("lightbox") && !Z.moved && Z.s === 1) closeLightbox(); });
+
+  // Zoom: pinch with two fingers, double-tap (or double-click), the mouse wheel, or + / - keys; drag to look around.
+  // Not zoomed: swipe left / right between pictures, down to close.
+  const Z = { s: 1, x: 0, y: 0, moved: false, pts: new Map(), start: null, lastTap: 0 };
+  const ZMAX = 5;
+  function zoomTo(s, fx, fy) {
+    const img = $("lb-img"), box = $("lightbox").getBoundingClientRect();
+    s = Math.max(1, Math.min(ZMAX, s));
+    if (fx != null) {
+      // Keep the point under the fingers / cursor where it is
+      const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
+      const px = (fx - cx - Z.x) / Z.s, py = (fy - cy - Z.y) / Z.s;
+      Z.x = fx - cx - s * px; Z.y = fy - cy - s * py;
+    }
+    Z.s = s;
+    if (s <= 1.01) { Z.s = 1; Z.x = Z.y = 0; }
+    // Don't drag the picture further than its edges
+    const mx = Math.max(0, (img.offsetWidth * Z.s - box.width) / 2), my = Math.max(0, (img.offsetHeight * Z.s - box.height) / 2);
+    Z.x = Math.max(-mx, Math.min(mx, Z.x)); Z.y = Math.max(-my, Math.min(my, Z.y));
+    img.style.transform = Z.s === 1 ? "" : "translate(" + Z.x + "px, " + Z.y + "px) scale(" + Z.s + ")";
+    $("lightbox").classList.toggle("zoomed", Z.s > 1);
+  }
+  const lbEl = $("lightbox");
+  lbEl.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".lb-btn")) return;
+    Z.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    lbEl.classList.add("dragging");
+    try { lbEl.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+    Z.moved = false;
+    const p = [...Z.pts.values()];
+    if (p.length === 2) {
+      Z.start = { pinch: true, s: Z.s, x: Z.x, y: Z.y, d: Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) || 1, mx: (p[0].x + p[1].x) / 2, my: (p[0].y + p[1].y) / 2 };
+    } else if (p.length === 1) Z.start = { pinch: false, x0: e.clientX, y0: e.clientY, x: Z.x, y: Z.y };
+  });
+  lbEl.addEventListener("pointermove", (e) => {
+    if (!Z.pts.has(e.pointerId) || !Z.start) return;
+    Z.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const p = [...Z.pts.values()], st = Z.start;
+    if (st.pinch && p.length === 2) {
+      Z.moved = true;
+      const d = Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y), mx = (p[0].x + p[1].x) / 2, my = (p[0].y + p[1].y) / 2;
+      // Scale around where the pinch started, and follow the fingers as they move
+      Z.s = st.s; Z.x = st.x + (mx - st.mx); Z.y = st.y + (my - st.my);
+      zoomTo(st.s * d / st.d, mx, my);
+    } else if (!st.pinch && Z.s > 1) {
+      const dx = e.clientX - st.x0, dy = e.clientY - st.y0;
+      if (Math.abs(dx) + Math.abs(dy) > 4) Z.moved = true;
+      Z.x = st.x + dx; Z.y = st.y + dy;
+      zoomTo(Z.s);
+    }
+  });
+  const lbUp = (e) => {
+    if (!Z.pts.has(e.pointerId)) return;
+    const st = Z.start;
+    Z.pts.delete(e.pointerId);
+    if (!Z.pts.size) lbEl.classList.remove("dragging");
+    if (Z.pts.size) { const [q] = [...Z.pts.values()]; Z.start = { pinch: false, x0: q.x, y0: q.y, x: Z.x, y: Z.y }; return; }
+    Z.start = null;
+    if (!st || st.pinch || e.type !== "pointerup") return;
+    const dx = e.clientX - st.x0, dy = e.clientY - st.y0;
+    // Double-tap: zoom in there, or back out
+    if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
+      const now = Date.now();
+      if (now - Z.lastTap < 300) { Z.lastTap = 0; Z.moved = true; zoomTo(Z.s > 1 ? 1 : 2.5, e.clientX, e.clientY); return; }
+      Z.lastTap = now;
+      return;
+    }
+    if (Z.s > 1) return;
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) stepLightbox(dx < 0 ? 1 : -1);
     else if (dy > 90) closeLightbox();
-  });
+  };
+  lbEl.addEventListener("pointerup", lbUp);
+  lbEl.addEventListener("pointercancel", lbUp);
+  lbEl.addEventListener("wheel", (e) => { e.preventDefault(); zoomTo(Z.s * Math.exp(-e.deltaY * 0.002), e.clientX, e.clientY); }, { passive: false });
 
   async function share(it) {
     const url = it.link || "";
@@ -2646,6 +2712,9 @@
   document.addEventListener("keydown", (e) => {
     if (!$("lightbox").hidden) {
       if (e.key === "Escape") closeLightbox();
+      else if (e.key === "+" || e.key === "=") zoomTo(Z.s * 1.5);
+      else if (e.key === "-") zoomTo(Z.s / 1.5);
+      else if (e.key === "0") zoomTo(1);
       else if (e.key === "ArrowLeft") stepLightbox(-1);
       else if (e.key === "ArrowRight") stepLightbox(1);
       return;
