@@ -678,3 +678,17 @@ html, body { max-width: 100%; overflow-x: hidden; overscroll-behavior-x: none; }
 /* Podcasts: swipe an episode sideways to remove it */
 .post.pod { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .post.pod.swiping { transition: none; cursor: grabbing; }
+
+/* The podcast's video in the player bar: tap to make it big */
+.pb-media { position: relative; cursor: zoom-in; }
+.pb-media::after { content: ""; position: absolute; inset: 0; border-radius: 8px; }
+.podbar.big { flex-wrap: wrap; }
+.podbar.big .pb-media { order: -2; width: 100%; cursor: zoom-out; }
+.podbar.big .pb-media iframe { width: min(100%, calc(52vh * 16 / 9)); height: auto; aspect-ratio: 16 / 9; margin: 0 auto; border-radius: 14px; }
+.podbar.big .pb-media::after { border-radius: 14px; }
+body.podbig .timeline { padding-bottom: calc(52vh + 140px + env(safe-area-inset-bottom)); }
+@media (max-width: 759px) {
+  .podbar.big .pb-media iframe { width: 100%; max-height: 46vh; }
+  body.podbig .timeline { padding-bottom: calc(56.25vw + 230px + env(safe-area-inset-bottom)); }
+  body.podbig .toast { bottom: calc(56.25vw + 222px + env(safe-area-inset-bottom)); }
+}

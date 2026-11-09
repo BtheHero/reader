@@ -1883,6 +1883,7 @@
     Pod.playing = false;
     Pod.wantPlay = false;
     $("pb-media").replaceChildren();
+    setPodBig(false);
     if (it && S.view === "podcasts") refreshPodRow(it);
   }
 
@@ -1942,7 +1943,15 @@
     if (Pod.mode === "yt") ytCommand("setPlaybackRate", [Pod.rate]);
     podUi();
   };
-  $("pb-close").onclick = () => { podStop(); podUi(); $("podbar").hidden = true; document.body.classList.remove("podding"); };
+  $("pb-close").onclick = () => { podStop(); podUi(); $("podbar").hidden = true; document.body.classList.remove("podding"); setPodBig(false); };
+  // Tap the small video to make it big (full width, at the bottom, above the controls); tap again to shrink it.
+  // The iframe isn't moved, so the video keeps playing; a layer over it catches the tap.
+  function setPodBig(on) {
+    $("podbar").classList.toggle("big", on);
+    document.body.classList.toggle("podbig", on);
+    $("pb-media").title = on ? "Make the video small" : "Make the video big";
+  }
+  $("pb-media").addEventListener("click", () => { if ($("pb-media").querySelector("iframe")) setPodBig(!$("podbar").classList.contains("big")); });
   $("pb-title").onclick = () => { if (Pod.item) openArticle(Pod.item.key); };
   $("pb-seek").addEventListener("input", () => { podDragging = true; if (Pod.dur) $("pb-time").textContent = hms($("pb-seek").value / 1000 * Pod.dur); });
   $("pb-seek").addEventListener("change", () => { podDragging = false; if (Pod.dur) podSeek($("pb-seek").value / 1000 * Pod.dur); });
