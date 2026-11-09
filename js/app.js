@@ -701,7 +701,7 @@
     else if (S.view.startsWith("feed:")) { const id = S.view.slice(5); list = list.filter(i => i.feedId === id); }
     else if (S.view.startsWith("group:") || S.view === "groups") { const ids = new Set(groupFeeds(S.view === "groups" ? currentGroup() : S.view.slice(6)).map(f => f.id)); list = list.filter(i => ids.has(i.feedId)); }
     // Read posts leave the timeline at the next refresh or launch (until then they stay where they are)
-    if (S.settings.unreadOnly && S.view !== "starred" && S.view !== "podcasts") list = list.filter(i => !i.read || S.keep.has(i.key) || i.key === S.current);
+    if (S.settings.unreadOnly && S.view !== "starred" && S.view !== "podcasts") list = list.filter(i => !i.read || S.keep.has(i.key) || (i.key === S.current && document.body.classList.contains("reading")));
     if (S.query) {
       const q = S.query.toLowerCase();
       list = list.filter(i => i.title.toLowerCase().includes(q) || Parse.plain(i.html).toLowerCase().includes(q) || (i.author || "").toLowerCase().includes(q));
