@@ -425,8 +425,11 @@
   // again. Undo puts it all back.
   function markAllRead() {
     const pods = S.view === "podcasts";
-    const shown = S.shown.map(k => S.items.get(k)).filter(Boolean);
-    if (!shown.length) return toast(pods ? "No episodes to clear" : "Nothing to clear here");
+    // Podcasts: episodes you've started (or the one playing) stay; swipe one away to remove it
+    const started = (i) => pods && ((i.pos > 5 && !i.watched) || (Pod.item && Pod.item.key === i.key));
+    const all = S.shown.map(k => S.items.get(k)).filter(Boolean);
+    const shown = all.filter(i => !started(i)), kept = all.length - shown.length;
+    if (!shown.length) return toast(pods ? (kept ? "Only episodes in progress here. Swipe one to remove it." : "No episodes to clear") : "Nothing to clear here");
     const before = shown.map(i => ({ read: i.read, watched: i.watched, kept: S.keep.has(i.key) }));
     const wasShowingRead = !S.settings.unreadOnly;
     const changed = [];
@@ -439,7 +442,7 @@
     saveItems(changed);
     renderFeeds();
     renderList(true);
-    toast("Cleared " + shown.length + (pods ? " episode" : " post") + (shown.length === 1 ? "" : "s"), "Undo", () => {
+    toast("Cleared " + shown.length + (pods ? " episode" : " post") + (shown.length === 1 ? "" : "s") + (kept ? " · kept " + kept + " in progress" : ""), "Undo", () => {
       shown.forEach((i, n) => {
         i.watched = before[n].watched;
         if (i.read !== before[n].read) { i.read = before[n].read; i.readAt = Date.now(); Account.itemChanged(i, "read"); }
@@ -1645,6 +1648,68 @@
     li.append(art, info, notes, btn);
     return li;
   }
+
+  // Swipe an episode sideways to remove it from Podcasts (as played); Undo brings it back
+  function removeEpisode(it, row) {
+    const before = { watched: it.watched, read: it.read, kept: S.keep.has(it.key) };
+    if (Pod.item && Pod.item.key === it.key) $("pb-close").click();
+    it.watched = true;
+    if (!it.read) { it.read = true; it.readAt = Date.now(); Account.itemChanged(it, "read"); }
+    S.keep.delete(it.key);
+    saveItems([it]);
+    const done = () => { renderCounts(); renderFeeds(); renderList(true); };
+    if (row) { row.style.transition = "transform .2s ease, opacity .2s ease"; row.style.opacity = "0"; setTimeout(done, 200); } else done();
+    toast("Removed “" + (it.title.length > 40 ? it.title.slice(0, 40) + "…" : it.title) + "”", "Undo", () => {
+      it.watched = before.watched;
+      if (it.read !== before.read) { it.read = before.read; it.readAt = Date.now(); Account.itemChanged(it, "read"); }
+      if (before.kept || before.read) S.keep.add(it.key);
+      saveItems([it]);
+      done();
+    });
+  }
+
+  let podSwipe = null, podSwipedAt = 0;
+  $("items").addEventListener("pointerdown", (e) => {
+    const row = e.target.closest(".post.pod");
+    if (!row || (e.pointerType === "mouse" && e.button !== 0)) return;
+    podSwipe = { row, x: e.clientX, y: e.clientY, dx: 0, on: false, id: e.pointerId };
+  });
+  $("items").addEventListener("pointermove", (e) => {
+    if (!podSwipe || e.pointerId !== podSwipe.id) return;
+    const dx = e.clientX - podSwipe.x, dy = e.clientY - podSwipe.y;
+    if (!podSwipe.on) {
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) { podSwipe = null; return; }
+      if (Math.abs(dx) < 12 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      podSwipe.on = true;
+      try { podSwipe.row.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
+      podSwipe.row.classList.add("swiping");
+    }
+    podSwipe.dx = dx;
+    podSwipe.row.style.transform = "translateX(" + dx + "px)";
+    podSwipe.row.style.opacity = String(Math.max(.3, 1 - Math.abs(dx) / podSwipe.row.offsetWidth));
+  });
+  const endSwipe = (e) => {
+    if (!podSwipe || e.pointerId !== podSwipe.id) return;
+    const { row, dx, on } = podSwipe;
+    podSwipe = null;
+    if (!on) return;
+    podSwipedAt = Date.now();
+    row.classList.remove("swiping");
+    const it = S.items.get(row.dataset.key);
+    if (it && Math.abs(dx) > row.offsetWidth * .33 && e.type === "pointerup") {
+      row.style.transition = "transform .2s ease, opacity .2s ease";
+      row.style.transform = "translateX(" + (dx > 0 ? "" : "-") + "110%)";
+      removeEpisode(it, row);
+    } else {
+      row.style.transition = "transform .2s ease, opacity .2s ease";
+      row.style.transform = ""; row.style.opacity = "";
+      setTimeout(() => { row.style.transition = ""; }, 220);
+    }
+  };
+  $("items").addEventListener("pointerup", endSwipe);
+  $("items").addEventListener("pointercancel", endSwipe);
+  // The tap that ends a swipe doesn't open or play the episode
+  $("items").addEventListener("click", (e) => { if (Date.now() - podSwipedAt < 400 && e.target.closest(".post.pod")) { e.stopPropagation(); e.preventDefault(); } }, true);
 
   function refreshPodRow(it) {
     const row = document.querySelector('.post.pod[data-key="' + CSS.escape(it.key) + '"]');

@@ -674,3 +674,7 @@ html, body { max-width: 100%; overflow-x: hidden; overscroll-behavior-x: none; }
   #clear-btn { display: none; }
   .tabs .fab svg { width: 24px; height: 24px; stroke-width: 2.3; }
 }
+
+/* Podcasts: swipe an episode sideways to remove it */
+.post.pod { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.post.pod.swiping { transition: none; cursor: grabbing; }
