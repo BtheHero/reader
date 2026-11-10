@@ -608,7 +608,9 @@
     $("count-all").textContent = c.all || "";
     $("tabcount-all").textContent = !c.all ? "" : c.all > 99 ? "99+" : c.all;
     $("count-starred").textContent = c.starred || "";
-    $("count-groups").textContent = tabGroups().reduce((n, g) => n + (c.groups[g] || 0), 0) || "";
+    const inGroups = tabGroups().reduce((n, g) => n + (c.groups[g] || 0), 0);
+    $("count-groups").textContent = inGroups || "";
+    $("tabcount-groups").textContent = !inGroups ? "" : inGroups > 99 ? "99+" : inGroups;
     $("count-podcasts").textContent = c.podcasts || "";
     for (const li of document.querySelectorAll(".feed")) li.querySelector(".count").textContent = c.feeds[li.dataset.id] || "";
     for (const b of document.querySelectorAll('.ghead .nav')) b.querySelector(".count").textContent = c.groups[b.dataset.view.slice(6)] || "";
