@@ -186,7 +186,7 @@
     if (S.refreshing || !feeds.length) return;
     S.refreshing = true;
     S.newKeys = new Set();
-    if (!quiet) status("Refreshing " + feeds.length + (feeds.length === 1 ? " feed…" : " feeds…"));
+    loading(0, feeds.length, quiet);
     let failed = 0, waiting = feeds.length, late = false, liveTimer = 0, settleTimer = 0, settle;
     // ...or once all but a few stragglers (a tenth of the feeds) are in and a second has passed
     const settled = new Promise(r => { settle = r; });
@@ -218,6 +218,7 @@
       await fetchBatch(feeds.map(f => f.url), (i, r) => {
         const f = feeds[i];
         waiting--;
+        if (!late) loading(feeds.length - waiting, feeds.length, quiet);
         if (waiting && waiting <= stragglers && !settleTimer) settleTimer = setTimeout(() => settle("late"), 1000);
         f.lastFetch = Date.now();
         const parsed = r.ok ? Parse.parseFeed(r.body, r.finalUrl || f.url) : null;
@@ -239,6 +240,7 @@
       const first = await Promise.race(quiet ? [all.then(() => "done")] : [all.then(() => "done"), settled, new Promise(r => setTimeout(r, REFRESH_WAIT, "late"))]);
       late = first === "late" && waiting + retries.length > 0;
       clearTimeout(settleTimer);
+      loading(null);
       clearTimeout(liveTimer);
       saveFeeds();
       status("");
@@ -271,6 +273,7 @@
         }
       }
     } catch (e) {
+      loading(null);
       endPull();
       renderFeeds();
       status(navigator.onLine === false ? "You're offline. Showing saved articles." : e.message, true);
@@ -278,6 +281,19 @@
       S.refreshing = false;
       podDurations();
     }
+  }
+
+  // Refreshing: a moving bar under the top bar (filling up as feeds come in) and, for a refresh you asked
+  // for, a "Refreshing 12 of 30" pill. loading(null) hides them.
+  function loading(done, total, quiet) {
+    const bar = $("loadbar"), pill = $("loadpill");
+    if (done == null) { bar.classList.remove("on"); pill.hidden = true; document.body.classList.remove("refreshing"); return; }
+    bar.classList.add("on");
+    bar.firstChild.style.width = total ? Math.max(8, done / total * 100) + "%" : "30%";
+    document.body.classList.add("refreshing");
+    if (quiet) return;
+    pill.hidden = false;
+    $("loadpill-text").textContent = total > 1 ? "Refreshing " + done + " of " + total + "…" : "Refreshing…";
   }
 
   // "N new posts" after a background refresh while you're scrolled down: tap to go to the top and see them
@@ -2321,20 +2337,29 @@
     const seq = ++addState.seq;
     addState.input = input;
     addState.found = null;
-    addMessage("Looking for feeds…");
+    addMessage("");
     showAddResults();
+    searching(true);
     try {
       const found = await findFeeds(input);
       if (seq !== addState.seq) return null;
+      searching(false);
       addState.found = found;
       addMessage(found.length > 1 ? "Found " + found.length + " feeds. Pick one:" : "");
       showAddResults();
       return found;
     } catch (err) {
       if (seq !== addState.seq) return null;
+      searching(false);
       addMessage(err.message, true);
       return null;
     }
+  }
+
+  // Searching for a feed: a spinner line and a moving bar along the top of the dialog
+  function searching(on) {
+    $("add-searching").hidden = !on;
+    $("add-dialog").classList.toggle("busy", on);
   }
 
   function showAddResults() {
@@ -2391,7 +2416,7 @@
     if (!v) return;
     const btn = $("add-submit");
     btn.disabled = true;
-    btn.textContent = "Looking…";
+    btn.innerHTML = '<span class="spinner"></span>Looking…';
     try {
       const strip = (x) => x.replace(/^https?:\/\//i, "");
       const shown = strip(v) === strip(addState.input) && addState.found;

@@ -66,6 +66,8 @@
       </header>
       <div class="ptr" id="ptr" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></div>
       <button class="newpill" id="newpill" hidden></button>
+      <div class="loadbar" id="loadbar" aria-hidden="true"><i></i></div>
+      <div class="loadpill" id="loadpill" role="status" aria-live="polite" hidden><span class="spinner"></span><span id="loadpill-text">Refreshing…</span></div>
       <div class="timeline" id="timeline">
         <div class="search" id="search-box" hidden><input type="search" id="search" placeholder="Search posts" aria-label="Search posts"></div>
         <div class="top" id="top"></div>
@@ -103,6 +105,7 @@
     <h2>Follow a feed</h2>
     <p>Paste a feed address, a website's address, a YouTube channel or playlist, or an X (Twitter) profile. BT Feeder finds the feed.</p>
     <input type="text" id="add-url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="example.com, a YouTube channel, x.com/name…" required>
+    <div class="searching" id="add-searching" hidden><span class="spinner"></span><span>Looking for feeds…</span></div>
     <p class="error" id="add-error" role="status" hidden></p>
     <ul class="results" id="add-results" hidden></ul>
     <label>Group <span class="opt">(optional)</span> <input type="text" id="add-group" list="group-names" autocomplete="off" placeholder="No group"></label>
