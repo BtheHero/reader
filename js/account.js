@@ -117,7 +117,7 @@ const Account = (() => {
 
   // ---------- Sync ----------
 
-  const SYNC_FEED_FIELDS = ["id", "url", "title", "siteUrl", "icon", "group", "filters", "customTitle", "x", "added", "podcast", "podMin", "groupOnly"];
+  const SYNC_FEED_FIELDS = ["id", "url", "title", "siteUrl", "icon", "group", "filters", "customTitle", "x", "added", "podcast", "podMin", "groupOnly", "priority"];
   const cleanFeed = (f) => Object.fromEntries(SYNC_FEED_FIELDS.filter(k => f[k] !== undefined).map(k => [k, f[k]]));
   const LOCAL_SETTINGS = ["v"];      // stay per device
   const cleanSettings = (s) => Object.fromEntries(Object.entries(s).filter(([k, v]) => !LOCAL_SETTINGS.includes(k) && v !== undefined));

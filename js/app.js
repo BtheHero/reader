@@ -584,9 +584,12 @@
       if (mute.length || only.length || r.noReposts || r.noReplies || r.mediaOnly) rules.set(f.id, { ...r, mute, only });
     }
     const blocked = new Set((S.settings.xBlocked || []).map(h => h.toLowerCase()));
+    const muted = words(S.settings.mutedWords);
     const xFeeds = new Set(S.feeds.filter(f => f.x).map(f => f.id));
     return (it) => {
       if (hiddenShort(it)) return true;
+      // Muted words: hidden from every feed (in the post, or in the post it quotes)
+      if (muted.length) { const t = lowerText(it) + (it.quote ? " " + Parse.plain(it.quote.html || "").toLowerCase() + " " + (it.quote.name || "").toLowerCase() : ""); if (muted.some(w => t.includes(w))) return true; }
       // Blocked X accounts: their reposts and the posts quoting them are hidden
       if (blocked.size && xFeeds.has(it.feedId) && ((isRepost(it) && blocked.has(repostOf(it).toLowerCase())) || (it.quote && blocked.has((it.quote.handle || "").toLowerCase())))) return true;
       const r = rules.get(it.feedId);
@@ -791,7 +794,11 @@
       const q = S.query.toLowerCase();
       list = list.filter(i => i.title.toLowerCase().includes(q) || Parse.plain(i.html).toLowerCase().includes(q) || (i.author || "").toLowerCase().includes(q));
     }
-    return list.sort((a, b) => b.date - a.date);
+    // Priority accounts: their new posts first (a post stays where it is once read, until the next refresh)
+    const prio = new Set(S.feeds.filter(f => f.priority).map(f => f.id));
+    if (!prio.size || S.view === "podcasts" || S.view === "starred") return list.sort((a, b) => b.date - a.date);
+    const up = (i) => prio.has(i.feedId) && (!i.read || S.keep.has(i.key)) ? 1 : 0;
+    return list.sort((a, b) => (up(b) - up(a)) || (b.date - a.date));
   }
 
   const isVideo = (it) => !!it.video && !it.video.audio;
@@ -975,6 +982,7 @@
       const rp = el("div", "repost", "↻ @" + f.x + " reposted");
       li.append(rp);
     }
+    if (f.priority && S.view !== "feed:" + f.id) sub.append(el("span", "prio", "Priority"), el("span", "dot", "·"));
     if (handle) sub.append(el("span", "handle", handle), el("span", "dot", "·"));
     sub.append(time);
     who.append(name, sub);
@@ -1892,6 +1900,8 @@
     $("pb-sub").textContent = f.title;
     $("pb-art").src = it.image || "";
     $("podbar").hidden = false;
+    $("podmini").hidden = !document.body.classList.contains("podhide");
+    $("pm-title").textContent = it.title;
     document.body.classList.add("podding");
     podUi();
     setRead(it, true);
@@ -2048,6 +2058,8 @@
   }
 
   function podUi() {
+    $("pm-play").innerHTML = Pod.playing ? '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg>';
+    $("pm-play").setAttribute("aria-label", Pod.playing ? "Pause" : "Play");
     $("pb-play").innerHTML = Pod.playing ? '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg>';
     $("pb-play").setAttribute("aria-label", Pod.playing ? "Pause" : "Play");
     $("pb-time").textContent = hms(Pod.time);
@@ -2103,7 +2115,17 @@
     if (Pod.mode === "yt") ytCommand("setPlaybackRate", [Pod.rate]);
     podUi();
   };
-  $("pb-close").onclick = () => { podStop(); podUi(); $("podbar").hidden = true; document.body.classList.remove("podding"); setPodBig(false); };
+  $("pb-close").onclick = () => { podStop(); podUi(); $("podbar").hidden = true; document.body.classList.remove("podding"); setPodBig(false); podHide(false); };
+  // Hide the player while it keeps playing: a small pill (play/pause, title) brings it back.
+  // The bar only slides off screen, so YouTube's player inside it keeps going.
+  function podHide(on) {
+    document.body.classList.toggle("podhide", on);
+    $("podmini").hidden = !on || $("podbar").hidden;
+    if (on) setPodBig(false);
+  }
+  $("pb-hide").onclick = () => podHide(true);
+  $("pm-open").onclick = () => podHide(false);
+  $("pm-play").onclick = () => podToggle();
   // Tap the small video to make it big (full width, at the bottom, above the controls); tap again to shrink it.
   // The iframe isn't moved, so the video keeps playing; a layer over it catches the tap.
   function setPodBig(on) {
@@ -2210,6 +2232,18 @@
   // A long-press on a phone, or a right-click
   document.addEventListener("contextmenu", (e) => { const t = heldTarget(e); if (!t) return; e.preventDefault(); clearTimeout(holdTimer); accountMenu(t.dataset.xh); });
   document.addEventListener("click", (e) => { if (Date.now() < heldUntil && heldTarget(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
+
+  // Muted words, from the menu: posts containing any of them are hidden everywhere
+  function applyMuted() { const n = words(S.settings.mutedWords).length; $("muted-btn").textContent = "Muted words: " + (n || "None"); }
+  $("muted-btn").onclick = async () => {
+    const r = await ask({ title: "Muted words", text: "Posts containing any of these words or phrases are hidden from every feed. Separate them with commas.",
+      input: S.settings.mutedWords || "", placeholder: "spoilers, giveaway, …", ok: "Save", extra: S.settings.mutedWords ? "Clear all" : "" });
+    if (r.action === "cancel") return;
+    const v = r.action === "extra" ? "" : words(r.value).join(", ");
+    if (v) S.settings.mutedWords = v; else delete S.settings.mutedWords;
+    saveSettings(); applyMuted(); renderCounts(); renderList(true);
+    toast(v ? "Muted " + words(v).length + " word" + (words(v).length === 1 ? "" : "s") : "No muted words");
+  };
 
   // Blocked accounts, from the menu: untick to unblock
   function applyBlocked() { const n = (S.settings.xBlocked || []).length; $("blocked-btn").textContent = "Blocked accounts: " + (n || "None"); }
@@ -2444,6 +2478,7 @@
     $("feed-url").value = f.url;
     $("feed-group").value = f.group || "";
     $("feed-grouponly").checked = !!f.groupOnly;
+    $("feed-priority").checked = !!f.priority;
     $("feed-grouponly-row").hidden = !f.group;
     const r = f.filters || {};
     $("flt-mute").value = r.mute || "";
@@ -2468,6 +2503,7 @@
     editing.group = $("feed-group").value.trim().replace(/\s+/g, " ");
     if (!editing.group) delete editing.group;
     if (editing.group && $("feed-grouponly").checked) editing.groupOnly = true; else delete editing.groupOnly;
+    if ($("feed-priority").checked) editing.priority = true; else delete editing.priority;
     const filters = { mute: $("flt-mute").value.trim(), only: $("flt-only").value.trim(), mediaOnly: $("flt-media").checked, textOnly: $("flt-text").checked,
       noReposts: !!editing.x && $("flt-reposts").checked, noReplies: !!editing.x && $("flt-replies").checked };
     if (hasFilters({ filters })) editing.filters = filters; else delete editing.filters;
@@ -2825,7 +2861,7 @@
     async setSettings(s) {
       S.settings = s;
       await saveSettings();
-      applyTheme(); applyShorts(); applyScrollRead(); applyPreviews(); applyInvidious(); applyYtKey(); applyBlocked();
+      applyTheme(); applyShorts(); applyScrollRead(); applyPreviews(); applyInvidious(); applyYtKey(); applyBlocked(); applyMuted();
       renderCounts();
       renderList(true);
     },
@@ -2894,6 +2930,7 @@
     applyScrollRead();
     applyPreviews();
     applyBlocked();
+    applyMuted();
     applyInvidious();
     applyYtKey();
     renderFeeds();

@@ -730,3 +730,21 @@ dialog.busy::before { content: ""; position: absolute; left: 0; right: 0; top: 0
 .tabcount { position: absolute; top: 0; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--grad); color: #fff;
   font-size: 10.5px; font-weight: 800; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px var(--glass-strong); }
 .tabcount:empty { display: none; }
+
+/* Priority accounts */
+.psub .prio { color: var(--accent); font-weight: 700; flex: none; }
+
+/* Podcast player hidden: the bar slides away (still playing), a small pill brings it back */
+.podbar { transition: transform .25s ease; }
+body.podhide .podbar { transform: translateY(calc(100% + 140px)); pointer-events: none; }
+body.podhide.podding .timeline { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+body.podhide.podding .toast { bottom: calc(150px + env(safe-area-inset-bottom)); }
+.podmini { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 8; display: flex; align-items: center; gap: 4px; padding: 5px 6px 5px 5px; max-width: min(320px, calc(100vw - 32px));
+  border-radius: 999px; background: var(--glass-strong); border: 1px solid var(--rim); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); box-shadow: var(--shadow); animation: pillin2 .2s ease; }
+@keyframes pillin2 { from { opacity: 0; transform: translateY(10px); } }
+.pm-play { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: var(--grad); color: #fff; flex: none; }
+.pm-play svg { width: 18px; height: 18px; fill: currentColor; stroke-width: 2.4; }
+.pm-open { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 6px 0 4px; font-weight: 600; font-size: 13.5px; color: var(--text); }
+.pm-open span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pm-open svg { width: 18px; height: 18px; color: var(--muted); }
+@media (max-width: 759px) { .podmini { right: 12px; bottom: calc(86px + env(safe-area-inset-bottom)); } }
