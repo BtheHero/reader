@@ -606,6 +606,7 @@
   function renderCounts() {
     const c = counts();
     $("count-all").textContent = c.all || "";
+    $("tabcount-all").textContent = !c.all ? "" : c.all > 99 ? "99+" : c.all;
     $("count-starred").textContent = c.starred || "";
     $("count-groups").textContent = tabGroups().reduce((n, g) => n + (c.groups[g] || 0), 0) || "";
     $("count-podcasts").textContent = c.podcasts || "";

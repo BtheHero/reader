@@ -724,3 +724,9 @@ dialog.busy { overflow: hidden; }
 dialog.busy::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: var(--grad); background-size: 200% 100%; animation: busybar 1s linear infinite; }
 @keyframes busybar { from { background-position: 200% 0; } to { background-position: 0 0; } }
 .btn .spinner { width: 14px; height: 14px; border-color: rgba(255, 255, 255, .35); border-top-color: #fff; }
+
+/* Phone: unread posts on the Home tab */
+.tabs button { position: relative; }
+.tabcount { position: absolute; top: 0; left: calc(50% + 6px); min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--grad); color: #fff;
+  font-size: 10.5px; font-weight: 800; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px var(--glass-strong); }
+.tabcount:empty { display: none; }
