@@ -35,11 +35,12 @@
       <button class="nav" data-view="groups"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>Groups</span><b class="count" id="count-groups"></b></button>
       <button class="nav" data-view="podcasts"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4.5" height="6.5" rx="1.8"/><rect x="16" y="14" width="4.5" height="6.5" rx="1.8"/></svg><span>Podcasts</span><b class="count" id="count-podcasts"></b></button>
       <button class="nav" data-view="starred"><svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg><span>Starred</span><b class="count" id="count-starred"></b></button>
+      <button class="nav" id="settings-nav"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
     </nav>
     <button class="btn primary compose" id="add-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Follow a feed</span></button>
     <div class="sidehead"><h2>Following</h2></div>
     <ul class="feeds" id="feeds"></ul>
-    <div class="sidefoot">
+    <div class="sidefoot" id="sidefoot" hidden>
       <button class="link" id="import-btn">Import OPML</button>
       <button class="link" id="export-btn">Export OPML</button>
       <button class="link" id="theme-btn">Theme: System</button>
@@ -63,6 +64,7 @@
         <button class="icon" id="search-btn" title="Search (/)" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
         <button class="icon" id="unread-btn" title="Show unread only" aria-label="Show unread only" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5"/></svg></button>
         <button class="icon" id="clear-btn" title="Mark everything here as read and hide it" aria-label="Mark everything here as read and hide it"><svg viewBox="0 0 24 24"><path d="m3 13 4 4L17 7M10 16l1 1L21 7"/></svg></button>
+        <button class="icon" id="settings-top" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
         <button class="icon" id="add-top" title="Follow a feed" aria-label="Follow a feed"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </header>
       <div class="ptr" id="ptr" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></div>
@@ -90,6 +92,13 @@
         <div class="article" id="article"></div>
       </div>
     </article>
+    <section class="settings" id="settings" aria-label="Settings">
+      <header class="bar">
+        <button class="icon back" id="settings-back" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg></button>
+        <h1>Settings</h1>
+      </header>
+      <div class="scroll"><div class="setbody" id="setbody"></div></div>
+    </section>
   </main>
 
   <nav class="tabs" id="tabs" aria-label="Sections">

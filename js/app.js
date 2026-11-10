@@ -2313,6 +2313,7 @@
   // ---------- Views / navigation ----------
 
   function selectView(view) {
+    if (document.body.classList.contains("insettings")) { closeSettings(); if (history.state && history.state.settings) history.replaceState(null, ""); }
     S.view = view;
     S.current = null;
     document.body.classList.remove("reading");
@@ -2338,8 +2339,88 @@
     if (LB.closing) { LB.closing = false; return; }
     if (!$("lightbox").hidden) return closeLightbox(true);
     if (document.body.classList.contains("drawer")) { document.body.classList.remove("drawer"); return; }
-    if (document.body.classList.contains("reading")) closeArticle();
+    if (document.body.classList.contains("reading")) return closeArticle();
+    if (document.body.classList.contains("insettings")) closeSettings();
   });
+
+  // ---------- Settings ----------
+  // Every setting in one place. The rows drive the same controls as before (kept, hidden, in the sidebar),
+  // so each setting still works exactly one way; the page redraws whenever one of them changes.
+  const onOff = (v) => /^(On|Hidden)$/.test(v);
+  function settingValue(id) { return ($(id).textContent.split(": ")[1] || "").trim(); }
+  function renderSettings() {
+    const body = $("setbody");
+    const top = body.parentNode.scrollTop;
+    body.textContent = "";
+    const section = (title, rows) => {
+      const sec = el("section", "setsec");
+      sec.append(el("h2", null, title));
+      const card = el("div", "setcard");
+      rows.filter(Boolean).forEach(r => card.append(r));
+      sec.append(card);
+      body.append(sec);
+    };
+    // A row: label (and a line of explanation); on the right a switch, a value, or nothing
+    const row = (label, sub, opts) => {
+      const b = el("button", "setrow" + (opts.danger ? " danger" : ""));
+      b.type = "button";
+      const txt = el("span", "settext");
+      txt.append(el("b", null, label));
+      if (sub) txt.append(el("span", null, sub));
+      b.append(txt);
+      if (opts.toggle != null) {
+        b.setAttribute("role", "switch");
+        b.setAttribute("aria-checked", String(!!opts.toggle));
+        b.append(el("span", "switch" + (opts.toggle ? " on" : "")));
+      } else if (opts.value != null) b.append(el("span", "setval", opts.value));
+      if (!opts.toggle && opts.toggle !== false) b.append(el("span", "chev", "›"));
+      b.onclick = () => { opts.go(); setTimeout(() => { if (document.body.classList.contains("insettings")) renderSettings(); }, 50); };
+      return b;
+    };
+    const click = (id) => () => $(id).click();
+    const acc = $("account-btn");
+    if (!acc.hidden) section("Account", [row(acc.querySelector(".acc-label").textContent, acc.querySelector(".acc-sub").textContent, { go: click("account-btn") })]);
+    section("Appearance", [
+      row("Theme", "Follow the system, or always light or dark", { value: settingValue("theme-btn"), go: click("theme-btn") }),
+      row("Previews", "Show the start of each post's text under its title", { toggle: onOff(settingValue("previews-btn")), go: click("previews-btn") }),
+      row("Hide YouTube Shorts", "Keep short vertical videos out of the timeline", { toggle: onOff(settingValue("shorts-btn")), go: click("shorts-btn") })
+    ]);
+    section("Reading", [
+      row("Mark read while scrolling", "A post you scroll past counts as read", { toggle: onOff(settingValue("scrollread-btn")), go: click("scrollread-btn") }),
+      row("Hide read posts", "Read posts leave the timeline at the next refresh", { toggle: !!S.settings.unreadOnly, go: () => { S.settings.unreadOnly = !S.settings.unreadOnly; saveSettings(); renderList(true); } }),
+      groupNames().length ? row("Groups tab", "Choose which groups appear in the Groups tab", { value: tabGroups().length + " of " + groupNames().length, go: () => openGroupsDialog() }) : null
+    ]);
+    section("Filtering", [
+      row("Muted words", "Hide posts containing these words, everywhere", { value: settingValue("muted-btn"), go: click("muted-btn") }),
+      row("Blocked accounts", "Their reposts and quotes are hidden", { value: settingValue("blocked-btn"), go: click("blocked-btn") })
+    ]);
+    section("YouTube & podcasts", [
+      row("YouTube API key", "Reads YouTube channels and video lengths (needed for Podcasts)", { value: settingValue("ytkey-btn"), go: click("ytkey-btn") }),
+      row("YouTube fallback", "Your own Invidious server, for videos that won't play and audio-only podcasts", { value: settingValue("invidious-btn"), go: click("invidious-btn") })
+    ]);
+    section("Your feeds", [
+      row("Import feeds", "Add feeds from an OPML file", { go: click("import-btn") }),
+      row("Export feeds", "Save all your feeds as an OPML file", { go: click("export-btn") })
+    ]);
+    const about = el("p", "setabout", "BT Feeder · following " + S.feeds.length + " feed" + (S.feeds.length === 1 ? "" : "s"));
+    body.append(about);
+    body.parentNode.scrollTop = top;
+  }
+  function openSettings() {
+    closeDrawer();
+    renderSettings();
+    document.body.classList.add("insettings");
+    for (const b of document.querySelectorAll(".side .nav, .tabs [data-view]")) b.classList.remove("active");
+    $("settings-nav").classList.add("active");
+    if (!(history.state && history.state.settings)) history.pushState({ settings: true }, "");
+  }
+  function closeSettings() { document.body.classList.remove("insettings"); $("settings-nav").classList.remove("active"); markActiveNav(); }
+  $("settings-nav").onclick = openSettings;
+  $("settings-top").onclick = openSettings;
+  $("settings-back").onclick = () => { if (history.state && history.state.settings) history.back(); else closeSettings(); };
+  // Redraw when a setting changes (its hidden control's label changes), or a settings dialog closes
+  new MutationObserver(() => { if (document.body.classList.contains("insettings")) renderSettings(); }).observe($("sidefoot"), { subtree: true, childList: true, characterData: true });
+  for (const d of ["ask-dialog", "blocked-dialog", "groups-dialog", "account-dialog"]) $(d) && $(d).addEventListener("close", () => { if (document.body.classList.contains("insettings")) setTimeout(renderSettings, 0); });
 
   // ---------- Dialogs ----------
 
@@ -2658,7 +2739,7 @@
 
   // ---------- Events ----------
 
-  document.querySelector(".views").addEventListener("click", (e) => { const b = e.target.closest(".nav"); if (b) selectView(b.dataset.view); });
+  document.querySelector(".views").addEventListener("click", (e) => { const b = e.target.closest(".nav"); if (b && b.dataset.view) selectView(b.dataset.view); });
   $("feeds").addEventListener("click", (e) => { const b = e.target.closest(".nav"); if (b) selectView(b.dataset.view); });
   $("items").addEventListener("click", (e) => {
     const li = e.target.closest(".post");
