@@ -14,6 +14,8 @@
   // this list is also the fallback when d420.net can't be reached.
   const NITTER_STATUS = "https://d420.net/api/v1/instances";
   const NITTER_ALLOWED = ["xitter.cf", "nitter.gq", "xitter.gq", "teapawt.net", "teapaw.org", "teapawt.org", "nitter.cf"];
+  // Backups, only while the servers above are down; accounts move back as soon as one of those is up again
+  const NITTER_BACKUP = ["goyimx.com"];
 
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
@@ -185,6 +187,14 @@
   async function refresh(feeds, { quiet } = {}) {
     if (S.refreshing || !feeds.length) return;
     S.refreshing = true;
+    // X accounts parked on a backup server go back to a main one as soon as one is working
+    if (feeds.some(f => f.x && NITTER_BACKUP.includes(host(f.url)))) {
+      try {
+        await nitterHosts();
+        const main = nitterCache.live || [];
+        if (main.length) feeds.filter(f => f.x && NITTER_BACKUP.includes(host(f.url))).forEach((f, i) => { f.url = "https://" + main[i % main.length] + "/" + f.x + "/rss"; });
+      } catch (e) { /* keep them where they are */ }
+    }
     S.newKeys = new Set();
     loading(0, feeds.length, quiet);
     let failed = 0, waiting = feeds.length, late = false, liveTimer = 0, settleTimer = 0, settle;
@@ -327,17 +337,19 @@
   // Healthy ones come first; the others follow, since the status page can lag behind a server coming back.
   async function nitterHosts() {
     if (nitterCache && Date.now() - nitterCache.at < 3600000) return nitterCache.hosts;
-    let live = [], known = [];
+    let live = [], backup = [], known = [];
     try {
       const d = await (await fetch(NITTER_STATUS)).json();
       known = d.hosts.map(h => h.domain);
       live = d.hosts.filter(h => h.healthy && h.rss && !h.is_bad_host && !h.unreliable && NITTER_ALLOWED.includes(h.domain))
         .sort((a, b) => (b.community_funded - a.community_funded) || (b.healthy_percentage_overall - a.healthy_percentage_overall) || (a.ping_avg - b.ping_avg))
         .map(h => h.domain);
+      backup = d.hosts.filter(h => h.healthy && h.rss && !h.is_bad_host && NITTER_BACKUP.includes(h.domain)).map(h => h.domain);
     } catch (e) { /* use the built-in list */ }
-    const hosts = [...new Set([...live, ...NITTER_ALLOWED])];
-    // Retry the status page sooner when it couldn't be read
-    nitterCache = { at: live.length ? Date.now() : Date.now() - 3300000, hosts, known: [...new Set([...known, ...NITTER_ALLOWED])] };
+    // Working main servers, then (only if none is working) the backups, then the rest; backups last otherwise
+    const hosts = [...new Set([...live, ...(live.length ? [] : backup), ...NITTER_ALLOWED, ...NITTER_BACKUP])];
+    // Check the status page again sooner while the main servers are down
+    nitterCache = { at: live.length ? Date.now() : Date.now() - 3300000, hosts, live, known: [...new Set([...known, ...NITTER_ALLOWED, ...NITTER_BACKUP])] };
     return hosts;
   }
 
@@ -345,7 +357,7 @@
   async function nitterUser(url) {
     let u;
     try { u = new URL(url); } catch (e) { return ""; }
-    if (!NITTER_ALLOWED.includes(u.hostname)) {
+    if (!NITTER_ALLOWED.includes(u.hostname) && !NITTER_BACKUP.includes(u.hostname)) {
       await nitterHosts();
       if (!nitterCache.known.includes(u.hostname)) return "";
     }
