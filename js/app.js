@@ -55,17 +55,18 @@
 
   // Fetch feeds through the site's fetcher. Batches go out at the same time, and each feed is handed to
   // onResult(index, result) as soon as it's in (the fetcher streams them), so one slow site holds up nothing.
+  let gentleQueue = Promise.resolve();
   async function fetchBatch(urls, onResult) {
     const out = new Array(urls.length);
     const done = (i, r) => { out[i] = r; if (onResult) onResult(i, r); };
     const jobs = [], rest = [];
+    const gentle = [];
     urls.forEach((u, i) => {
       if (S.settings.ytKey && YT_FEED.test(u)) jobs.push(youtubeApiFeed(u).then(r => done(i, r)));
+      else if (NITTER_BACKUP.includes(host(u))) gentle.push(i);
       else rest.push(i);
     });
-    for (let s = 0; s < rest.length; s += BATCH) {
-      const idx = rest.slice(s, s + BATCH);
-      jobs.push((async () => {
+    const post = async (idx) => {
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -88,7 +89,15 @@
           }
           if (end) break;
         }
-      })());
+    };
+    for (let s = 0; s < rest.length; s += BATCH) jobs.push(post(rest.slice(s, s + BATCH)));
+    // Backup Nitter servers turn away more than a handful of requests at once: six at a time
+    // (one queue for the whole app, so separate retries don't arrive all at once either)
+    for (let s = 0; s < gentle.length; s += 6) {
+      const chunk = gentle.slice(s, s + 6);
+      const job = gentleQueue.then(() => post(chunk));
+      gentleQueue = job.catch(() => {});
+      jobs.push(job);
     }
     await Promise.all(jobs);
     urls.forEach((u, i) => { if (!out[i]) out[i] = { url: u, ok: false, error: "No answer" }; });
@@ -187,12 +196,14 @@
   async function refresh(feeds, { quiet } = {}) {
     if (S.refreshing || !feeds.length) return;
     S.refreshing = true;
-    // X accounts parked on a backup server go back to a main one as soon as one is working
-    if (feeds.some(f => f.x && NITTER_BACKUP.includes(host(f.url)))) {
+    // X accounts: on a main server while one is working (back from the backup as soon as one is), and straight
+    // to the backup while none is, instead of failing first
+    if (feeds.some(f => f.x)) {
       try {
         await nitterHosts();
         const main = nitterCache.live || [];
         if (main.length) feeds.filter(f => f.x && NITTER_BACKUP.includes(host(f.url))).forEach((f, i) => { f.url = "https://" + main[i % main.length] + "/" + f.x + "/rss"; });
+        else if (nitterCache.statusOk) feeds.filter(f => f.x && NITTER_ALLOWED.includes(host(f.url))).forEach(f => { f.url = "https://" + NITTER_BACKUP[0] + "/" + f.x + "/rss"; });
       } catch (e) { /* keep them where they are */ }
     }
     S.newKeys = new Set();
@@ -213,15 +224,19 @@
       const current = host(f.url);
       const urls = (await nitterHosts()).filter(h => h !== current).slice(0, 3).map(h => "https://" + h + "/" + f.x + "/rss");
       let moved = false;
-      await fetchBatch(urls, (i, r) => {
+      const take = (list) => (i, r) => {
         if (moved) return;
-        const parsed = r.ok && Parse.parseFeed(r.body, urls[i]);
+        const parsed = r.ok && Parse.parseFeed(r.body, list[i]);
         if (!parsed) return;
         moved = true;
-        f.url = urls[i];
+        f.url = list[i];
         apply(f, parsed);
         live();
-      });
+      };
+      await fetchBatch(urls, take(urls));
+      // A busy backup server (it turns away bursts): once more, a few seconds later
+      const again = [f.url, ...urls].filter((u, k, a) => a.indexOf(u) === k && NITTER_BACKUP.includes(host(u)));
+      if (!moved && again.length) { await new Promise(r => setTimeout(r, 3000)); await fetchBatch(again, take(again)); }
       if (!moved) failed++;
     };
     const all = (async () => {
@@ -337,19 +352,19 @@
   // Healthy ones come first; the others follow, since the status page can lag behind a server coming back.
   async function nitterHosts() {
     if (nitterCache && Date.now() - nitterCache.at < 3600000) return nitterCache.hosts;
-    let live = [], backup = [], known = [];
+    let live = [], known = [], statusOk = false;
     try {
       const d = await (await fetch(NITTER_STATUS)).json();
       known = d.hosts.map(h => h.domain);
+      statusOk = true;
       live = d.hosts.filter(h => h.healthy && h.rss && !h.is_bad_host && !h.unreliable && NITTER_ALLOWED.includes(h.domain))
         .sort((a, b) => (b.community_funded - a.community_funded) || (b.healthy_percentage_overall - a.healthy_percentage_overall) || (a.ping_avg - b.ping_avg))
         .map(h => h.domain);
-      backup = d.hosts.filter(h => h.healthy && h.rss && !h.is_bad_host && NITTER_BACKUP.includes(h.domain)).map(h => h.domain);
     } catch (e) { /* use the built-in list */ }
-    // Working main servers, then (only if none is working) the backups, then the rest; backups last otherwise
-    const hosts = [...new Set([...live, ...(live.length ? [] : backup), ...NITTER_ALLOWED, ...NITTER_BACKUP])];
+    // Working main servers; if none is working, the backups first (the status page's own checks can miss them)
+    const hosts = [...new Set([...live, ...(live.length ? [] : NITTER_BACKUP), ...NITTER_ALLOWED, ...NITTER_BACKUP])];
     // Check the status page again sooner while the main servers are down
-    nitterCache = { at: live.length ? Date.now() : Date.now() - 3300000, hosts, live, known: [...new Set([...known, ...NITTER_ALLOWED, ...NITTER_BACKUP])] };
+    nitterCache = { at: live.length ? Date.now() : Date.now() - 3300000, hosts, live, statusOk, known: [...new Set([...known, ...NITTER_ALLOWED, ...NITTER_BACKUP])] };
     return hosts;
   }
 
