@@ -5,6 +5,7 @@
   // work at the root of BT Feeder's own site and at /reader/ on another one. A packaged app served from
   // another origin would set the full https:// address here.
   const API_URL = new URL("fetch", document.baseURI).href;
+  const REDDIT_API = new URL("reddit", document.baseURI).href;
   const BATCH = 45;                 // feeds per call; matches MAX_URLS in the function
   const STALE_MIN = 30;             // opening the reader refreshes feeds older than this
   const KEEP_PER_FEED = 300;        // older articles beyond this are dropped (starred ones are kept)
@@ -60,9 +61,10 @@
     const out = new Array(urls.length);
     const done = (i, r) => { out[i] = r; if (onResult) onResult(i, r); };
     const jobs = [], rest = [];
-    const gentle = [];
+    const gentle = [], reddit = [];
     urls.forEach((u, i) => {
       if (S.settings.ytKey && YT_FEED.test(u)) jobs.push(youtubeApiFeed(u).then(r => done(i, r)));
+      else if (S.settings.redditId && redditPath(u) != null) reddit.push(i);
       else if (NITTER_BACKUP.includes(host(u))) gentle.push(i);
       else rest.push(i);
     });
@@ -91,6 +93,10 @@
         }
     };
     for (let s = 0; s < rest.length; s += BATCH) jobs.push(post(rest.slice(s, s + BATCH)));
+    for (let s = 0; s < reddit.length; s += BATCH) {
+      const idx = reddit.slice(s, s + BATCH);
+      jobs.push(redditApi(idx.map(i => urls[i])).then(res => res.forEach((r, n) => done(idx[n], r))));
+    }
     // Backup Nitter servers turn away more than a handful of requests at once: six at a time
     // (one queue for the whole app, so separate retries don't arrive all at once either)
     for (let s = 0; s < gentle.length; s += 6) {
@@ -103,6 +109,92 @@
     urls.forEach((u, i) => { if (!out[i]) out[i] = { url: u, ok: false, error: "No answer" }; });
     return out;
   }
+
+  // ---------- Reddit through its API (your own Client ID), for when its RSS feeds aren't available ----------
+  // A Reddit feed address -> the API listing it stands for ("/r/xbox", "/r/xbox/top?t=week", "/user/name/submitted");
+  // null when it isn't one
+  function redditPath(url) {
+    if (!Parse.isReddit(url)) return null;
+    let u;
+    try { u = new URL(url); } catch (e) { return null; }
+    let p = u.pathname.replace(/\/?\.rss$/, "").replace(/\/+$/, "");
+    if (p && !/^\/(r|user)\/[\w+-]+(\/[\w-]+){0,3}$/.test(p)) return null;
+    if (/^\/user\/[\w-]+$/.test(p)) p += "/submitted";
+    const t = u.searchParams.get("t");
+    return (p || "/") + (t ? "?t=" + encodeURIComponent(t) : "");
+  }
+  function redditDevice() {
+    try {
+      let d = localStorage.getItem("redditDevice");
+      if (!d) { d = Array.from(crypto.getRandomValues(new Uint8Array(15)), b => b.toString(16).padStart(2, "0")).join(""); localStorage.setItem("redditDevice", d); }
+      return d;
+    } catch (e) { return ""; }
+  }
+  async function redditApi(urls) {
+    const fail = (error) => urls.map(url => ({ url, ok: false, error }));
+    let d;
+    try {
+      const res = await fetch(REDDIT_API, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId: S.settings.redditId, deviceId: redditDevice(), paths: urls.map(redditPath) }) });
+      d = await res.json();
+      if (!res.ok) return fail(d && d.error ? d.error : "Reddit's API answered " + res.status);
+    } catch (e) { return fail("Couldn't reach Reddit's API"); }
+    return d.results.map((r, i) => {
+      const url = urls[i];
+      if (!r.ok) return { url, ok: false, status: r.status, error: r.error };
+      try { return { url, ok: true, status: 200, finalUrl: url, type: "application/atom+xml", body: redditAtom(JSON.parse(r.body), url) }; }
+      catch (e) { return { url, ok: false, error: "Reddit sent something unexpected" }; }
+    });
+  }
+  // Reddit's JSON listing, written as the Atom feed Reddit itself would have sent, so posts keep the same ids
+  // (no duplicates when switching between the two) and go through the same clean-up
+  function redditAtom(listing, url) {
+    const x = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    const posts = ((listing && listing.data && listing.data.children) || []).map(c => c.data).filter(Boolean);
+    const first = posts[0] || {};
+    const path = redditPath(url) || "/";
+    const title = /^\/user\//.test(path) ? "u/" + path.split("/")[2] : first.subreddit_name_prefixed && /^\/r\/[\w-]+(\/|$)/.test(path) ? first.subreddit_name_prefixed : "Reddit";
+    const entries = posts.map(d => {
+      const link = "https://www.reddit.com" + d.permalink;
+      const pic = (o) => o && (o.u || o.gif || o.mp4) || "";
+      const preview = d.preview && d.preview.images && d.preview.images[0] && d.preview.images[0].source && d.preview.images[0].source.url;
+      const gallery = d.is_gallery && d.media_metadata && d.gallery_data ? d.gallery_data.items.map(g => pic((d.media_metadata[g.media_id] || {}).s)).filter(Boolean) : [];
+      let md = d.selftext_html ? d.selftext_html.replace(/<!--\s*SC_(ON|OFF)\s*-->/g, "") : "";
+      if (gallery.length) {
+        const imgs = gallery.map(src => '<p><img src="' + x(src) + '"></p>').join("");
+        md = md ? md.replace(/<\/div>\s*$/, imgs + "</div>") : '<div class="md">' + imgs + "</div>";
+      }
+      const thumb = gallery[0] || (d.over_18 ? "" : preview) || (/^https?:/.test(d.thumbnail || "") ? d.thumbnail : "");
+      const html = "<table><tr><td>" + (thumb ? '<a href="' + x(link) + '"><img src="' + x(thumb) + '" alt="" /></a>' : "") + "</td><td>" + md +
+        ' submitted by <a href="https://www.reddit.com/user/' + x(d.author) + '"> /u/' + x(d.author) + " </a> <br/>" +
+        ' <span><a href="' + x(gallery.length ? link : d.url_overridden_by_dest || d.url || link) + '">[link]</a></span> <span><a href="' + x(link) + '">[comments]</a></span></td></tr></table>';
+      const when = new Date((d.created_utc || 0) * 1000).toISOString();
+      return "<entry><id>" + x(d.name) + "</id><title>" + x(d.title) + '</title><link href="' + x(link) + '"/><author><name>/u/' + x(d.author) + "</name></author>" +
+        "<published>" + when + "</published><updated>" + when + '</updated><content type="html">' + x(html) + "</content></entry>";
+    });
+    return '<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>' + x(title) + '</title><link rel="alternate" href="https://www.reddit.com' + x(path.split("?")[0]) + '"/>' + entries.join("") + "</feed>";
+  }
+
+  function applyReddit() { $("reddit-btn").textContent = "Reddit Client ID: " + (S.settings.redditId ? "On" : "Off"); }
+  $("reddit-btn").onclick = async () => {
+    const r = await ask({ title: "Reddit Client ID",
+      text: "Reads subreddits through Reddit's own API instead of its RSS feeds.\nMake one at reddit.com/prefs/apps: “create another app…”, choose “installed app”, any name, redirect uri http://localhost, then copy the code shown under the app's name.",
+      input: S.settings.redditId || "", placeholder: "Client ID", ok: "Save", extra: S.settings.redditId ? "Remove" : "" });
+    if (r.action === "cancel") return;
+    const v = r.action === "extra" ? "" : r.value.trim();
+    if (v === (S.settings.redditId || "")) return;
+    if (v) {
+      // Check it with Reddit before keeping it
+      S.settings.redditId = v;
+      const [t] = await redditApi(["https://www.reddit.com/r/announcements/.rss"]);
+      if (!t.ok) { delete S.settings.redditId; applyReddit(); return toast("Didn't work: " + t.error); }
+    } else delete S.settings.redditId;
+    saveSettings();
+    applyReddit();
+    const subs = S.feeds.filter(f => Parse.isReddit(f.url));
+    toast(v ? "Reddit Client ID works." + (subs.length ? " Refreshing Reddit feeds…" : "") : "Reddit Client ID removed: back to RSS");
+    if (v && subs.length) refresh(subs);
+  };
 
   async function youtubeApiFeed(url) {
     const [, kind, id] = YT_FEED.exec(url);
@@ -248,7 +340,7 @@
         f.lastFetch = Date.now();
         const parsed = r.ok ? Parse.parseFeed(r.body, r.finalUrl || f.url) : null;
         if (!parsed) {
-          f.error = r.ok ? "This address no longer returns a feed" : YT_FEED.test(f.url) && !S.settings.ytKey ? YT_HELP : r.error;
+          f.error = r.ok ? "This address no longer returns a feed" : YT_FEED.test(f.url) && !S.settings.ytKey ? YT_HELP : Parse.isReddit(f.url) && !S.settings.redditId ? (r.error || "Failed") + ". If Reddit has stopped its RSS feeds, add a Reddit Client ID in Settings." : r.error;
           if (f.x) retries.push(retryX(f).catch(() => { failed++; })); else failed++;
           return;
         }
@@ -341,7 +433,8 @@
     if (f.x) Parse.xify(parsed, f.x);
     tidy(parsed, f.url);
     f.error = "";
-    if (!f.customTitle && parsed.title) f.title = parsed.title;
+    // (Reddit feeds keep their name: its API and its RSS feed name a subreddit differently)
+    if (!f.customTitle && parsed.title && !(Parse.isReddit(f.url) && f.title)) f.title = parsed.title;
     if (parsed.siteUrl) f.siteUrl = parsed.siteUrl;
     if (parsed.icon) f.icon = parsed.icon;
     return merge(f, parsed);
@@ -2425,6 +2518,9 @@
       row("YouTube API key", "Reads YouTube channels and video lengths (needed for Podcasts)", { value: settingValue("ytkey-btn"), go: click("ytkey-btn") }),
       row("YouTube fallback", "Your own Invidious server, for videos that won't play and audio-only podcasts", { value: settingValue("invidious-btn"), go: click("invidious-btn") })
     ]);
+    section("Reddit", [
+      row("Reddit Client ID", "Read subreddits through Reddit's API (your own app) instead of RSS", { value: settingValue("reddit-btn"), go: click("reddit-btn") })
+    ]);
     section("Your feeds", [
       row("Import feeds", "Add feeds from an OPML file", { go: click("import-btn") }),
       row("Export feeds", "Save all your feeds as an OPML file", { go: click("export-btn") })
@@ -2969,7 +3065,7 @@
     async setSettings(s) {
       S.settings = s;
       await saveSettings();
-      applyTheme(); applyShorts(); applyScrollRead(); applyPreviews(); applyInvidious(); applyYtKey(); applyBlocked(); applyMuted();
+      applyTheme(); applyShorts(); applyScrollRead(); applyPreviews(); applyInvidious(); applyYtKey(); applyBlocked(); applyMuted(); applyReddit();
       renderCounts();
       renderList(true);
     },
@@ -3039,6 +3135,7 @@
     applyPreviews();
     applyBlocked();
     applyMuted();
+    applyReddit();
     applyInvidious();
     applyYtKey();
     renderFeeds();
