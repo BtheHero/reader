@@ -1897,13 +1897,33 @@ const Music = (() => {
   // Previews: their own small player (the music bar is for your songs)
   const pvAudio = new Audio();
   const pv = { key: "" };
-  function pvPlay(x) {
+  // Deezer's preview links are signed and stop working after a few minutes (hdnea=exp=<seconds>), but charts,
+  // playlists and searches are kept for hours: ask Deezer for a fresh link when it's expired or close to it.
+  const dzExpired = (u) => { const m = /exp=(\d+)/.exec(u || ""); return !!m && +m[1] * 1000 - Date.now() < 60000; };
+  async function dzFresh(x) {
+    const id = x.key.slice(3);
+    // The time makes the fetcher ask Deezer again instead of handing back its cached copy (with an old link)
+    const j = await getJSON("https://api.deezer.com/track/" + encodeURIComponent(id) + "?t=" + Date.now(), true);
+    if (j && j.preview) x.preview = j.preview;
+    return x.preview;
+  }
+  async function pvPlay(x, retried) {
     if (!x || !x.preview) return A.toast("No preview for this song");
     if (!audio.paused) audio.pause();
     A.stopOthers();
     pv.key = x.key;
+    pvUi();
+    const dz = x.key.startsWith("dz:");
+    if (dz && dzExpired(x.preview)) await dzFresh(x);
+    if (pv.key !== x.key) return;            // another song was picked meanwhile
     pvAudio.src = x.preview;
-    pvAudio.play().catch(() => A.toast("The preview didn't play"));
+    try { await pvAudio.play(); }
+    catch (e) {
+      if (pv.key !== x.key || (e && e.name === "AbortError")) return;
+      // The link may still have gone stale: once more with a fresh one
+      if (dz && !retried) { const old = x.preview; if (await dzFresh(x) && pv.key === x.key) return pvPlay(x, true); x.preview = x.preview || old; }
+      A.toast("The preview didn't play");
+    }
     pvUi();
   }
   function pvStop() { if (!pvAudio.paused) pvAudio.pause(); pv.key = ""; pvUi(); }
