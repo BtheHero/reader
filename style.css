@@ -968,3 +968,25 @@ body.musicking .timeline { padding-bottom: calc(120px + env(safe-area-inset-bott
   .mn-panel { max-height: 70vh; }
 }
 @media (max-width: 759px) { .mhead .mcount { width: 100%; } .mhead .msort { margin-right: auto; } .mhead > .grow { display: none; } }
+
+/* ---------- Music home: your music, and what's popular ---------- */
+.mshead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 26px; }
+.mshead .msec { margin: 0 0 8px; font-size: 20px; }
+.mcards { display: flex; gap: 14px; overflow-x: auto; padding: 2px 2px 8px; scrollbar-width: none; scroll-snap-type: x proximity; }
+.mcards::-webkit-scrollbar { display: none; }
+.mcard { flex: none; width: 150px; display: flex; flex-direction: column; text-align: left; gap: 2px; scroll-snap-align: start; }
+.mcard .mcover { width: 150px; height: 150px; border-radius: 14px; margin-bottom: 6px; box-shadow: var(--card-shadow); transition: transform .15s; }
+.mcard:hover .mcover { transform: translateY(-2px); }
+.mcard b { font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcard span { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mwelcome { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; padding: 16px 18px; border-radius: 20px; background: var(--card); border: 1px solid var(--rim); }
+.mwelcome b { font-size: 16px; }
+.mwelcome span { color: var(--muted); font-size: 14px; }
+.mrem { position: relative; }
+.mrem.previewing { background: var(--accent-soft); }
+.mrem.previewing::after { content: ""; position: absolute; left: 0; bottom: 0; height: 3px; width: var(--pv, 0%); background: var(--grad); border-radius: 2px; }
+.mown { font-style: normal; font-size: 11px; font-weight: 700; color: #16a34a; background: rgba(22, 163, 74, .12); padding: 1px 6px; border-radius: 6px; margin-right: 6px; }
+.mpv { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); flex: none; }
+.mpv svg { width: 16px; height: 16px; fill: currentColor; }
+.mpv:disabled { opacity: .35; cursor: default; }
+@media (max-width: 759px) { .mcard { width: 132px; } .mcard .mcover { width: 132px; height: 132px; } }

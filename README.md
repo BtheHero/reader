@@ -147,6 +147,14 @@ The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in
 
 The **Music** tab plays songs from a folder on your device.
 
+- **Home** (its first page): your music (jump back in, your playlists, most played) and what's popular: Deezer's top
+  songs, popular playlists and top albums, and Apple Music's top songs for your country (from the browser's
+  language), refreshed every three hours. Deezer is read through the fetcher (it doesn't allow browsers), all in one
+  request. Songs you have ("In your music") play in full from your library; the others play Deezer's / Apple's
+  30-second preview, and ⋯ opens them in Spotify, Apple Music, YouTube Music, Deezer or SoundCloud. A playlist or
+  album page shows how many of its songs you have, plays those, and **Save as playlist** keeps them as your own
+  playlist. (Spotify's charts need a Spotify login, so they aren't here.)
+
 - **Choose music folder** (or the folder button in its top bar): in the Android app, Android's folder picker (access
   is kept; the app lists the folder and hands each file to the page at `__music/?id=…`, seeking included); in Chrome /
   Edge on a computer, the folder is remembered and asked for again after a restart ("Allow"); in other browsers, its
