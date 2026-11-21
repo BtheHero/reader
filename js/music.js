@@ -6,6 +6,8 @@
 //    at __music/?id=… (MainActivity.java), so nothing is copied;
 //  - a desktop browser with folder access (Chrome, Edge): the folder is remembered, and asked for again after a restart;
 //  - any other browser: pick the folder's files; they're readable until the page is closed (the library is kept).
+//  - your own Telegram bot: songs you send or forward to it are added (saved into the folder in the Android app,
+//    else kept in this browser).
 // The library itself (tags, likes, play counts, playlists) is kept in this browser's IndexedDB, never sent anywhere.
 
 const Music = (() => {
@@ -32,8 +34,11 @@ const Music = (() => {
     tab: "songs", sort: "title", stack: [], query: "",
     queue: [], order: null, qi: -1, shuffle: false, repeat: "off",
     playing: false, counted: false, listened: 0, lastT: 0, errors: 0, url: "",
-    scanning: null, nowOpen: false, panel: "lyrics", lrc: null, lrcAt: -1
+    scanning: null, nowOpen: false, panel: "lyrics", lrc: null, lrcAt: -1,
+    tg: null                          // { token, bot, owner, offset, seen } your Telegram bot (this device only)
   };
+  const isTg = (id) => String(id).startsWith("tg:");                // a song kept in this browser (from Telegram)
+  function clearFolderTracks() { for (const id of [...M.tracks.keys()]) if (!isTg(id)) M.tracks.delete(id); }
   const audio = new Audio();
   audio.preload = "auto";
 
@@ -51,7 +56,7 @@ const Music = (() => {
   function save() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => Store.set("music", {
-      v: 1, tracks: [...M.tracks.values()], playlists: M.playlists, artists: M.artists, source: M.source,
+      v: 1, tracks: [...M.tracks.values()], playlists: M.playlists, artists: M.artists, source: M.source, tg: M.tg,
       prefs: { tab: M.tab, sort: M.sort, shuffle: M.shuffle, repeat: M.repeat, queue: M.queue.slice(0, 3000), qi: M.qi, pos: audio.currentTime || 0 }
     }).catch(() => {}), 500);
   }
@@ -63,7 +68,14 @@ const Music = (() => {
   const appUrl = (id) => new URL("__music/?id=" + encodeURIComponent(id), document.baseURI).href;
 
   // Something that reads a range of a file: { size, read(start, length) -> Uint8Array }
+  async function tgBlob(id) {
+    let b = M.files.get(id);
+    if (!b) { b = await Store.get("tgfile:" + id); if (!b) throw new Error("nofile"); M.files.set(id, b); }
+    return b;
+  }
+
   async function opener(t) {
+    if (isTg(t.id)) { const f = await tgBlob(t.id); return { size: f.size, read: async (s, n) => new Uint8Array(await f.slice(s, s + n).arrayBuffer()) }; }
     if (M.source && M.source.kind === "app") {
       const url = appUrl(t.id);
       return { size: t.size, read: async (s, n) => {
@@ -80,6 +92,7 @@ const Music = (() => {
   }
 
   async function mediaSrc(t) {
+    if (isTg(t.id)) return URL.createObjectURL(await tgBlob(t.id));
     if (M.source && M.source.kind === "app") return appUrl(t.id);
     let f = M.files.get(t.id);
     if (!f && M.source && M.source.kind === "dir" && M.dir) {
@@ -435,7 +448,7 @@ const Music = (() => {
       todo.push(f);
     }
     let gone = 0;
-    for (const id of [...M.tracks.keys()]) if (!seen.has(id)) { M.tracks.delete(id); gone++; }
+    for (const id of [...M.tracks.keys()]) if (!seen.has(id) && !isTg(id)) { M.tracks.delete(id); gone++; }
     M.listed = true;
     M.need = "";
     if (name && M.source) M.source.name = name;
@@ -470,7 +483,7 @@ const Music = (() => {
       try { d = JSON.parse(json); } catch (e) { return; }
       if (d.cancelled) { if (!M.source) render(); return; }
       if (d.error) { M.need = d.error === "none" ? "" : "scan"; if (d.error === "none") M.source = null; render(); if (d.error !== "none") A.toast("Couldn't read the music folder: " + d.error); return; }
-      if (!M.source || M.source.kind !== "app") { M.source = { kind: "app", name: d.folder || "Music" }; M.tracks.clear(); }
+      if (!M.source || M.source.kind !== "app") { M.source = { kind: "app", name: d.folder || "Music" }; clearFolderTracks(); }
       scan(d.files || [], d.folder);
     }
   };
@@ -511,7 +524,7 @@ const Music = (() => {
       const same = M.source && M.source.kind === "dir" && M.dir && (await M.dir.isSameEntry(dir).catch(() => false));
       M.dir = dir;
       Store.set("musicdir", dir).catch(() => {});
-      if (!same) M.tracks.clear();
+      if (!same) clearFolderTracks();
       M.source = { kind: "dir", name: dir.name };
       M.need = "";
       render();
@@ -525,7 +538,7 @@ const Music = (() => {
     e.target.value = "";
     if (!files.length) return A.toast("No music files in that folder");
     const root = (files[0].webkitRelativePath || "").split("/")[0] || "Music";
-    if (!M.source || M.source.kind !== "files" || M.source.name !== root) M.tracks.clear();
+    if (!M.source || M.source.kind !== "files" || M.source.name !== root) clearFolderTracks();
     M.source = { kind: "files", name: root };
     M.files.clear();
     const list = files.map(f => {
@@ -557,9 +570,10 @@ const Music = (() => {
   }
 
   function forget() {
-    A.ask({ title: "Forget the music folder?", text: "Your library, likes, play counts and playlists are removed from BT Feeder. The music files themselves stay where they are.", ok: "Forget", danger: true }).then(r => {
+    A.ask({ title: "Forget the music folder?", text: "Your library, likes, play counts and playlists are removed from BT Feeder (songs from Telegram kept in this browser too). The music files in the folder stay where they are.", ok: "Forget", danger: true }).then(r => {
       if (r.action !== "ok") return;
       stop();
+      for (const id of M.tracks.keys()) if (isTg(id)) Store.del("tgfile:" + id).catch(() => {});
       M.tracks.clear(); M.playlists = []; M.art.clear(); M.artists = {}; M.queue = []; M.qi = -1; M.source = null; M.dir = null; M.files.clear(); M.stack = []; M.need = "";
       Store.set("musicdir", null).catch(() => {});
       const app = window.ReaderApp;
@@ -753,11 +767,11 @@ const Music = (() => {
       b.type = "button"; b.dataset.tab = k;
       chips.append(b);
     }
-    chips.hidden = !M.source || !M.tracks.size;
+    chips.hidden = !M.tracks.size;
     const body = $("m-body");
     body.textContent = "";
-    if (!M.source) return empty(body);
-    if (M.need === "reconnect" || M.need === "repick") {
+    if (!M.source && !M.tracks.size) return empty(body);
+    if (M.source && (M.need === "reconnect" || M.need === "repick")) {
       const n = el("div", "mnote");
       n.append(el("span", null, M.need === "reconnect" ? "Allow BT Feeder to open “" + M.source.name + "” again to play your music." : "Pick your music folder again to play it (this browser can't keep access to it)."));
       const b = el("button", "btn primary", M.need === "reconnect" ? "Allow" : "Pick folder");
@@ -774,7 +788,7 @@ const Music = (() => {
     const top = M.stack[M.stack.length - 1];
     if (top) return detail(body, top);
     if (!M.tracks.size) {
-      if (!M.scanning) body.append(el("div", "empty", M.listed ? "No music files in “" + M.source.name + "”." : "Loading your library…"));
+      if (!M.scanning) body.append(el("div", "empty", !M.source ? "No songs yet." : M.listed ? "No music files in “" + M.source.name + "”." : "Loading your library…"));
       return;
     }
     const q = norm(M.query);
@@ -832,8 +846,12 @@ const Music = (() => {
       el("p", null, "Choose the folder your songs are in. BT Feeder reads MP3, M4A / AAC, FLAC, Ogg, Opus, WAV and WebM files (and anything else your device plays), with their tags and cover art, and finds lyrics, album and artist info online."));
     const b = el("button", "btn primary", "Choose music folder");
     b.type = "button"; b.dataset.act = "folder";
-    if (old) { b.disabled = true; box.append(b, el("p", "hint", "Update the BT Feeder app to use a music folder.")); }
-    else box.append(b, el("p", "hint", "Your music stays on this device: nothing is uploaded."));
+    const tg = el("button", "btn", M.tg ? "Telegram: @" + M.tg.bot : "Get songs from Telegram");
+    tg.type = "button"; tg.dataset.act = "telegram";
+    const row = el("div", "actions center");
+    row.append(b, tg);
+    if (old) { b.disabled = true; box.append(row, el("p", "hint", "Update the BT Feeder app to use a music folder.")); }
+    else box.append(row, el("p", "hint", "Your music stays on this device: nothing is uploaded."));
     body.append(box);
   }
 
@@ -1036,6 +1054,7 @@ const Music = (() => {
     if (act) {
       const a = act.dataset.act;
       if (a === "folder") return chooseFolder();
+      if (a === "telegram") return telegram();
       if (a === "reconnect") return M.need === "repick" ? $("m-files").click() : rescan();
       if (a === "back") return history.state && history.state.music ? history.back() : (M.stack.pop(), render());
       if (a === "newlist") return newPlaylist();
@@ -1103,8 +1122,18 @@ const Music = (() => {
       t.album ? { label: "Go to album", fn: () => goAlbum(t) } : null,
       { label: "Go to artist", fn: () => goArtist(mainArtist(t)) },
       { label: "Song info", fn: () => songInfoDialog(t) },
-      { label: "Identify song…", fn: () => identify(t) }
+      { label: "Identify song…", fn: () => identify(t) },
+      isTg(t.id) ? { label: "Delete this song", danger: true, fn: () => deleteTg(t) } : null
     ]);
+  }
+  async function deleteTg(t) {
+    const r = await A.ask({ title: "Delete “" + t.title + "”?", text: "It was sent from Telegram and is kept only in BT Feeder.", ok: "Delete", danger: true });
+    if (r.action !== "ok") return;
+    if (cur() === t) next();
+    M.tracks.delete(t.id); M.files.delete(t.id);
+    M.queue = M.queue.filter(id => id !== t.id); M.qi = Math.min(M.qi, M.queue.length - 1);
+    Store.del("tgfile:" + t.id).catch(() => {});
+    save(); render();
   }
   // From anywhere (the Now playing screen included) to an album's or artist's page in the Music tab
   function go(entry) {
@@ -1514,9 +1543,11 @@ const Music = (() => {
   $("mn-seek").addEventListener("change", () => { seeking = false; const d = audio.duration || 0; if (d) audio.currentTime = $("mn-seek").value / 1000 * d; });
   document.querySelector(".mn-tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-panel]"); if (b) { M.panel = b.dataset.panel; panel(); } });
   $("m-folder").onclick = () => {
-    if (!M.source) return chooseFolder();
+    const tgItem = { label: M.tg ? "Telegram bot: @" + M.tg.bot + "…" : "Get songs from Telegram…", fn: telegram };
+    if (!M.source) return menu("Your music", plural(M.tracks.size, "song"), [{ label: "Choose music folder…", fn: chooseFolder }, tgItem]);
     menu("Music folder", "“" + M.source.name + "” · " + plural(M.tracks.size, "song"), [
-      { label: "Check for new music", fn: rescan },
+      { label: "Check for new music", fn: () => { rescan(); tgPoll(true); } },
+      tgItem,
       { label: "Choose another folder…", fn: chooseFolder },
       { label: "Forget this folder", danger: true, fn: forget }
     ]);
@@ -1529,6 +1560,166 @@ const Music = (() => {
   let qTimer = 0;
   $("m-q").addEventListener("input", (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { M.query = e.target.value.trim(); if (M.stack.length) { M.stack = []; } render(); }, 150); });
 
+  // ---------- Your Telegram bot: songs you send or forward to it ----------
+  // You make a bot with @BotFather and paste its token. BT Feeder asks Telegram for the bot's new messages when the
+  // app opens, every couple of minutes while it's open, and when the Music tab opens. Audio files (and audio sent as
+  // files, like FLAC) are downloaded: in the Android app into the music folder's "Telegram" folder, elsewhere kept in
+  // this browser. The bot answers each one. Only the first person to message the bot (you) is listened to.
+  // Telegram keeps a bot's messages for 24 hours: songs sent while BT Feeder stays closed longer than that are lost.
+  const TG = "https://api.telegram.org";
+  const TG_FN = new URL("telegram", document.baseURI).href;
+  const TG_MAX = 20 * 1048576;              // what a bot may download
+  let tgBusy = false;
+
+  // Straight to Telegram when the browser may; else through BT Feeder's function (functions/telegram.js)
+  async function tgCall(method, params, token) {
+    token = token || M.tg.token;
+    const form = new URLSearchParams();
+    for (const [k, v] of Object.entries(params || {})) form.set(k, typeof v === "object" ? JSON.stringify(v) : String(v));
+    try {
+      const r = await fetch(TG + "/bot" + token + "/" + method, { method: "POST", body: form });
+      return await r.json();
+    } catch (e) { /* not reachable from here */ }
+    const r = await fetch(TG_FN, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, method, params: params || {} }) });
+    return r.json();
+  }
+  async function tgDownload(path) {
+    try {
+      const r = await fetch(TG + "/file/bot" + M.tg.token + "/" + path);
+      if (r.ok) return await r.blob();
+    } catch (e) { /* not reachable from here */ }
+    const r = await fetch(TG_FN, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: M.tg.token, file: path }) });
+    if (!r.ok) throw new Error("Couldn't download it from Telegram");
+    return r.blob();
+  }
+  const tgSay = (chat, text, replyTo) => tgCall("sendMessage", { chat_id: chat, text, ...(replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {}) }).catch(() => {});
+
+  // The Android app saves into the music folder (Telegram/…) and answers through ReaderMusic.onSaved
+  const saving = new Map();
+  window.ReaderMusic.onSaved = (id, json) => { const f = saving.get(id); saving.delete(id); if (f) { try { f(JSON.parse(json)); } catch (e) { f({ error: "bad answer" }); } } };
+  function nativeSave(url, name) {
+    return new Promise((resolve) => {
+      const id = Math.random().toString(36).slice(2);
+      saving.set(id, resolve);
+      window.ReaderApp.musicSave(id, url, name);
+    });
+  }
+
+  const cleanName = (s) => String(s || "").replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+
+  // One song from a message -> the library
+  async function tgSave(f) {
+    const g = await tgCall("getFile", { file_id: f.file_id });
+    if (!g.ok) throw new Error(g.description || "Telegram didn't give the file");
+    const path = g.result.file_path;
+    const ext = (/\.[a-z0-9]{2,5}$/i.exec(path) || /\.[a-z0-9]{2,5}$/i.exec(f.file_name || "") || [".mp3"])[0];
+    let name = cleanName(f.file_name) || cleanName([f.performer, f.title].filter(Boolean).join(" - ")) || "Song " + f.file_unique_id;
+    if (!AUDIO.test(name)) name += ext;
+    let t = null;
+    const app = window.ReaderApp;
+    if (app && app.musicSave && M.source && M.source.kind === "app" && !M.tg.noWrite) {
+      const res = await nativeSave(TG + "/file/bot" + M.tg.token + "/" + path, name);
+      if (res.ok) {
+        t = await readTrack({ id: res.id, path: res.path, name: res.name, size: res.size, mtime: Date.now() }, null);
+      } else if (res.error === "nowrite") {
+        M.tg.noWrite = true;
+        A.toast("Choose your music folder again to let BT Feeder save Telegram songs into it (kept in the app for now)");
+      } else throw new Error(res.error || "Couldn't save it");
+    }
+    if (!t) {
+      const blob = await tgDownload(path);
+      const id = "tg:" + f.file_unique_id;
+      await Store.set("tgfile:" + id, blob);
+      M.files.set(id, blob);
+      t = await readTrack({ id, path: "Telegram/" + name, name, size: blob.size, mtime: Date.now() }, null);
+    }
+    // No tags in the file: Telegram's own title and performer
+    if (t.guessed && t.album === "Telegram") t.album = "";      // not an album: just where it was saved
+    if (t.guessed && f.title) { t.title = f.title; if (f.performer) t.artist = f.performer; t.guessed = !f.performer; }
+    if (!t.dur && f.duration) t.dur = f.duration;
+    t.fromTg = true;
+    M.tracks.set(t.id, t);
+    return t;
+  }
+
+  async function tgPoll(byHand) {
+    if (!M.tg || !M.tg.token || tgBusy) return;
+    tgBusy = true;
+    let added = 0;
+    try {
+      const d = await tgCall("getUpdates", { offset: M.tg.offset || 0, timeout: 0, allowed_updates: ["message"] });
+      if (!d.ok) {
+        if (d.error_code === 401) A.toast("Your Telegram bot's token stopped working: connect it again");
+        else if (d.error_code === 409) A.toast("Your Telegram bot is connected to something else (a webhook): BT Feeder can't read it");
+        else if (byHand) A.toast("Telegram: " + (d.description || "no answer"));
+        return;
+      }
+      for (const u of d.result || []) {
+        M.tg.offset = u.update_id + 1;
+        const m = u.message;
+        if (!m || !m.chat) continue;
+        if (!M.tg.owner) { M.tg.owner = m.chat.id; M.tg.ownerName = (m.from && (m.from.username ? "@" + m.from.username : m.from.first_name)) || ""; }
+        if (m.chat.id !== M.tg.owner) { tgSay(m.chat.id, "This bot is private."); continue; }
+        const doc = m.document && (AUDIO.test(m.document.file_name || "") || /^audio\//.test(m.document.mime_type || "")) ? m.document : null;
+        const f = m.audio || doc;
+        if (!f) {
+          if (m.text && /^\/start/.test(m.text)) tgSay(m.chat.id, "Hi! Send or forward songs here and they're added to your music in BT Feeder.");
+          else if (m.voice || m.video || m.photo || m.text) tgSay(m.chat.id, "Send a song (an audio file) and it goes to your music in BT Feeder.", m.message_id);
+          continue;
+        }
+        M.tg.seen = M.tg.seen || [];
+        if (M.tg.seen.includes(f.file_unique_id)) { tgSay(m.chat.id, "Already in your music.", m.message_id); continue; }
+        if (f.file_size > TG_MAX) { tgSay(m.chat.id, "Too big: Telegram lets bots download files up to 20 MB.", m.message_id); continue; }
+        try {
+          const t = await tgSave(f);
+          M.tg.seen.push(f.file_unique_id);
+          if (M.tg.seen.length > 5000) M.tg.seen.splice(0, 1000);
+          added++;
+          tgSay(m.chat.id, "✓ Added to your music: " + t.title + (t.artist ? " — " + t.artist : ""), m.message_id);
+        } catch (e) {
+          tgSay(m.chat.id, "Couldn't add it: " + (e.message || "error") + ". Send it again to retry.", m.message_id);
+        }
+        save();
+      }
+      save();
+    } catch (e) {
+      if (byHand) A.toast("Couldn't reach Telegram (offline?)");
+    } finally { tgBusy = false; }
+    if (added) {
+      A.toast(plural(added, "song") + " from Telegram added to your music");
+      if (document.body.classList.contains("inmusic")) render();
+    } else if (byHand) A.toast("No new songs from Telegram");
+  }
+
+  async function telegram() {
+    if (M.tg && M.tg.token) {
+      return menu("Telegram bot", "@" + M.tg.bot + (M.tg.ownerName ? " · listening to " + M.tg.ownerName : " · send it a message to start"), [
+        { label: "Check for new songs now", fn: () => tgPoll(true) },
+        { label: "Open @" + M.tg.bot + " in Telegram", fn: () => window.open("https://t.me/" + M.tg.bot, "_blank", "noopener") },
+        { label: "Connect another bot…", fn: () => connectBot() },
+        { label: "Disconnect", danger: true, fn: () => { M.tg = null; save(); A.toast("Telegram bot disconnected"); render(); } }
+      ]);
+    }
+    connectBot();
+  }
+  async function connectBot() {
+    const r = await A.ask({ title: "Songs from Telegram",
+      text: "Send or forward songs to your own Telegram bot and they're added to your music.\n\n1. In Telegram, open @BotFather and send /newbot.\n2. Paste the token it gives you here.\n3. Open your bot, press Start, then send it songs (from music bots too: forward them).\n\nOnly you can use it: the first person to message the bot. Telegram keeps messages for a day, so open BT Feeder within 24 hours of sending.",
+      input: "", placeholder: "123456789:AA…", ok: "Connect" });
+    if (r.action !== "ok" || !r.value) return;
+    const token = r.value.replace(/\s+/g, "");
+    if (!/^\d{5,15}:[\w-]{30,60}$/.test(token)) return A.toast("That doesn't look like a bot token (numbers:letters)");
+    A.toast("Connecting…");
+    let me;
+    try { me = await tgCall("getMe", {}, token); } catch (e) { return A.toast("Couldn't reach Telegram (offline?)"); }
+    if (!me || !me.ok) return A.toast("Telegram didn't accept that token");
+    M.tg = { token, bot: me.result.username, owner: 0, offset: 0, seen: M.tg && M.tg.seen || [] };
+    save();
+    render();
+    A.toast("Connected to @" + me.result.username + ". Send it songs!", "Open", () => window.open("https://t.me/" + me.result.username, "_blank", "noopener"));
+    tgPoll(false);
+  }
+
   // ---------- What app.js uses ----------
 
   async function init(api) {
@@ -1540,6 +1731,7 @@ const Music = (() => {
         M.playlists = d.playlists || [];
         M.artists = d.artists || {};
         M.source = d.source || null;
+        M.tg = d.tg || null;
         const p = d.prefs || {};
         M.tab = p.tab || "songs"; M.sort = p.sort || "title"; M.shuffle = !!p.shuffle; M.repeat = p.repeat || "off";
         M.queue = (p.queue || []).filter(id => M.tracks.has(id)); M.qi = Math.min(p.qi == null ? -1 : p.qi, M.queue.length - 1); M.resumeAt = p.pos || 0;
@@ -1551,11 +1743,16 @@ const Music = (() => {
     // The last song, ready to carry on (paused)
     if (cur()) { barUi(); $("m-bar").hidden = false; document.body.classList.add("musicking"); }
     render();
+    // Songs sent to your Telegram bot: now, and every two minutes while BT Feeder is open
+    setTimeout(() => tgPoll(false), 3000);
+    setInterval(() => { if (document.visibilityState === "visible") tgPoll(false); }, 120000);
   }
 
   return {
     init,
-    show() { ensureListed(); render(); },
+    show() { ensureListed(); render(); tgPoll(false); },
+    telegram: () => telegram(),
+    telegramLabel: () => M.tg ? "@" + M.tg.bot : "Off",
     back() {
       if (M.nowOpen) { closeNow(true); return true; }
       if (document.body.classList.contains("inmusic") && M.stack.length) { M.stack.pop(); render(); return true; }

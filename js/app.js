@@ -2683,6 +2683,9 @@
     section("Reddit", [
       row("Reddit Client ID", "Read subreddits through Reddit's API (your own app) instead of RSS", { value: settingValue("reddit-btn"), go: click("reddit-btn") })
     ]);
+    section("Music", [
+      row("Songs from Telegram", "Send or forward songs to your own Telegram bot: they're added to your music", { value: Music.telegramLabel(), go: () => Music.telegram() })
+    ]);
     section("Your feeds", [
       row("Import feeds", "Add feeds from an OPML file", { go: click("import-btn") }),
       row("Export feeds", "Save all your feeds as an OPML file", { go: click("export-btn") })

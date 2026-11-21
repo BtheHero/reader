@@ -37,6 +37,7 @@ const Store = (() => {
   return {
     get: (key) => tx("kv", "readonly", s => reqP(s.get(key))),
     set: (key, val) => tx("kv", "readwrite", s => { s.put(val, key); }),
+    del: (key) => tx("kv", "readwrite", s => { s.delete(key); }),
     allItems: () => tx("items", "readonly", s => reqP(s.getAll())),
     putItems: (items) => items.length ? tx("items", "readwrite", s => { for (const it of items) s.put(it); }) : Promise.resolve(),
     deleteItems: (keys) => keys.length ? tx("items", "readwrite", s => { for (const k of keys) s.delete(k); }) : Promise.resolve()

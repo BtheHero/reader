@@ -165,6 +165,16 @@ The **Music** tab plays songs from a folder on your device.
   About, Up next). ⋯ on a song: play next, add to queue, add to a playlist, like, go to album / artist, song info.
   In the Android app it keeps playing with the screen off, with previous / play / next in the notification and on
   headphones. Playing music stops a podcast, and the other way round.
+- **Songs from Telegram:** connect your own Telegram bot (Settings → Songs from Telegram, or the folder button in
+  Music): make one with @BotFather (`/newbot`) and paste its token. Then send or forward songs to the bot (from music
+  bots too: forward their files). BT Feeder asks Telegram for the bot's new messages when it opens, every two minutes
+  while it's open, and when the Music tab opens; audio files (and audio sent as files, like FLAC) are downloaded and
+  added to your music, and the bot replies "✓ Added". In the Android app they're saved into the music folder's
+  `Telegram` folder (a folder chosen before this existed needs choosing again, to allow writing); otherwise they're
+  kept in this browser (⋯ → Delete this song). Only the first person to message the bot is listened to.
+  Limits: bots can download files up to 20 MB, and Telegram keeps a bot's messages for 24 hours, so open BT Feeder
+  within a day of sending. The token stays on this device. When the browser can't reach Telegram directly, calls go
+  through `functions/telegram.js` (passes requests on with your token, keeps nothing).
 - Everything (library, likes, play counts, playlists, small cover pictures) stays in this browser's IndexedDB; the
   files are never uploaded.
 

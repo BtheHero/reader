@@ -157,16 +157,93 @@ public class MainActivity extends ComponentActivity {
     private final ActivityResultLauncher<Uri> pickFolder = registerForActivityResult(
             new ActivityResultContracts.OpenDocumentTree(), uri -> {
                 if (uri == null) { sendMusic("{\"cancelled\":true}"); return; }
+                // Read, and write (songs from the Telegram bot are saved into the folder)
                 try {
-                    getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                } catch (SecurityException e) { /* still readable until the app closes */ }
+                    getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                } catch (SecurityException e) {
+                    try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (SecurityException e2) { /* still readable until the app closes */ }
+                }
                 Uri old = musicTree();
                 if (old != null && !old.equals(uri)) {
-                    try { getContentResolver().releasePersistableUriPermission(old, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (SecurityException e) { /* fine */ }
+                    releaseFolder(old);
                 }
                 prefs().edit().putString("musicTree", uri.toString()).apply();
                 scanMusic();
             });
+
+    private void releaseFolder(Uri tree) {
+        try { getContentResolver().releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION); }
+        catch (SecurityException e) {
+            try { getContentResolver().releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (SecurityException e2) { /* fine */ }
+        }
+    }
+
+    /**
+     * A song from the Telegram bot, downloaded straight into the music folder's "Telegram" folder. Answers
+     * ReaderMusic.onSaved(id, { ok, id, path, name, size } | { error }); error "nowrite" when the folder was chosen
+     * without write access (before this existed): the page keeps the song itself and asks to choose the folder again.
+     */
+    private void saveSong(String reqId, String url, String name) {
+        io.execute(() -> {
+            JSONObject res = new JSONObject();
+            try {
+                Uri tree = musicTree();
+                if (tree == null) throw new IllegalStateException("No music folder");
+                if (!url.startsWith("https://api.telegram.org/file/bot")) throw new IllegalArgumentException("Not a Telegram file");
+                String rootId = DocumentsContract.getTreeDocumentId(tree);
+                Uri dir = null;
+                try (Cursor c = getContentResolver().query(DocumentsContract.buildChildDocumentsUriUsingTree(tree, rootId),
+                        new String[]{DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE}, null, null, null)) {
+                    while (c != null && c.moveToNext()) {
+                        if ("Telegram".equals(c.getString(1)) && DocumentsContract.Document.MIME_TYPE_DIR.equals(c.getString(2))) { dir = DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0)); break; }
+                    }
+                }
+                Uri doc;
+                try {
+                    if (dir == null) dir = DocumentsContract.createDocument(getContentResolver(), DocumentsContract.buildDocumentUriUsingTree(tree, rootId), DocumentsContract.Document.MIME_TYPE_DIR, "Telegram");
+                    String ext = name.contains(".") ? name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT) : "";
+                    String mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
+                    doc = dir == null ? null : DocumentsContract.createDocument(getContentResolver(), dir, mime != null ? mime : "audio/mpeg", name);
+                } catch (SecurityException e) {
+                    doc = null;
+                    res.put("error", "nowrite");
+                }
+                if (doc == null) {
+                    if (!res.has("error")) res.put("error", "Couldn't create the file");
+                } else {
+                    long size = 0;
+                    java.net.HttpURLConnection http = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                    http.setConnectTimeout(15000);
+                    http.setReadTimeout(30000);
+                    try (InputStream in = http.getInputStream(); OutputStream out = getContentResolver().openOutputStream(doc)) {
+                        if (out == null) throw new IOException("Couldn't write the file");
+                        byte[] buf = new byte[65536];
+                        int n;
+                        while ((n = in.read(buf)) > 0) { out.write(buf, 0, n); size += n; }
+                    } catch (IOException e) {
+                        try { DocumentsContract.deleteDocument(getContentResolver(), doc); } catch (Exception e2) { /* fine */ }
+                        throw e;
+                    } finally {
+                        http.disconnect();
+                    }
+                    String shown = name;
+                    try (Cursor c = getContentResolver().query(doc, new String[]{DocumentsContract.Document.COLUMN_DISPLAY_NAME}, null, null, null)) {
+                        if (c != null && c.moveToFirst() && c.getString(0) != null) shown = c.getString(0);
+                    }
+                    res.put("ok", true);
+                    res.put("id", DocumentsContract.getDocumentId(doc));
+                    res.put("path", "Telegram/" + shown);
+                    res.put("name", shown);
+                    res.put("size", size);
+                }
+            } catch (Exception e) {
+                try { res.put("error", String.valueOf(e.getMessage())); } catch (Exception e2) { /* fine */ }
+            }
+            String json = res.toString();
+            runOnUiThread(() -> web.evaluateJavascript("window.ReaderMusic && window.ReaderMusic.onSaved && window.ReaderMusic.onSaved("
+                    + JSONObject.quote(reqId) + "," + JSONObject.quote(json) + ")", null));
+        });
+    }
 
     private SharedPreferences prefs() { return getSharedPreferences("reader", MODE_PRIVATE); }
 
@@ -538,13 +615,17 @@ public class MainActivity extends ComponentActivity {
             runOnUiThread(MainActivity.this::startUpdate);
         }
 
+        /** Music tab: save a song from the Telegram bot into the music folder (answers ReaderMusic.onSaved) */
+        @JavascriptInterface
+        public void musicSave(String reqId, String url, String name) {
+            saveSong(reqId, url, name);
+        }
+
         /** Music tab: forget the folder */
         @JavascriptInterface
         public void musicForget() {
             Uri old = musicTree();
-            if (old != null) {
-                try { getContentResolver().releasePersistableUriPermission(old, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (SecurityException e) { /* fine */ }
-            }
+            if (old != null) releaseFolder(old);
             prefs().edit().remove("musicTree").apply();
         }
 
