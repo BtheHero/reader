@@ -113,6 +113,8 @@ The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in
   streams. Public Invidious / Piped servers refuse Cloudflare or are down, so it has to be your own (personal use;
   this goes against YouTube's terms, so leave it off in any Play Store version).
 - **Videos** view lists every video; **Shorts: Hidden** (bottom of the sidebar) hides YouTube Shorts everywhere.
+- **Back** (Android's back button or gesture, the browser's) closes whatever popup is open first (menus, questions,
+  an X account card…), then an open post, the Now playing screen, a music page, Settings; only then does it leave.
 - **Wide view** (`w`, or the corners button) gives the article or video the whole window.
 - A video **pauses when you scroll it out of sight** (in the timeline or an open post), except in fullscreen.
 - **Live streams:** where you were in a live stream is kept, and once it's over its recording resumes from there
@@ -167,9 +169,16 @@ The **Music** tab plays songs from a folder on your device.
   right match by hand. Artist pages add a picture and fan count (Deezer, through the fetcher) and a bio (Wikipedia).
   **Lyrics** come from [LRCLIB](https://lrclib.net), synced line by line when available (tap a line to jump there),
   or from lyrics embedded in the file.
+- **Search** (🔍 in the Music tab) looks in your music (songs, artists, albums) and everywhere: Deezer's whole catalogue
+  (songs with previews, artists with their top songs, albums), or iTunes' when Deezer can't be reached.
+- **Music downloader bot:** set the Telegram bot you use to download songs by name (Settings → Music downloader bot).
+  Songs you don't have get a ⤓ button (and "Get it with @bot" in ⋯, and on the search page for what you typed): it
+  opens that bot in Telegram with "Artist - Title" already typed in (also copied), you press Send. Bots can't message
+  each other, so forward what it sends you to your BT Feeder bot to add it to your music.
 - Tabs: Songs (sort by title, artist, album, recently added), Albums, Artists, Playlists, Liked, Most played,
   Recently played. A play counts after 30 seconds (or half of a short song).
-- Player: a bar at the bottom (tap it for **Now playing**: big cover, seek, shuffle, repeat all / one, like, Lyrics,
+- Player: a bar at the bottom; ⌄ minimizes it to a small pill (play / pause, open, close) and keeps playing, ✕ stops
+  it (tap the bar for **Now playing**: big cover, seek, shuffle, repeat all / one, like, Lyrics,
   About, Up next). ⋯ on a song: play next, add to queue, add to a playlist, like, go to album / artist, song info.
   In the Android app it keeps playing with the screen off, with previous / play / next in the notification and on
   headphones. Playing music stops a podcast, and the other way round.

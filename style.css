@@ -990,3 +990,17 @@ body.musicking .timeline { padding-bottom: calc(120px + env(safe-area-inset-bott
 .mpv svg { width: 16px; height: 16px; fill: currentColor; }
 .mpv:disabled { opacity: .35; cursor: default; }
 @media (max-width: 759px) { .mcard { width: 132px; } .mcard .mcover { width: 132px; height: 132px; } }
+
+/* The music bar minimized: a small pill (play / pause, open, close); the music keeps playing */
+.mbar { transition: transform .25s ease; }
+body.musichide .mbar { transform: translateY(calc(100% + 140px)); pointer-events: none; }
+body.musichide.musicking .mwrap, body.musichide.musicking .timeline { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
+.mb-hide, .mb-close { color: var(--muted); }
+@media (max-width: 759px) {
+  .mbar .mb-close { display: grid; }
+  .mbar .pb-btn { width: 38px; height: 38px; }
+  .mbar .pb-play { width: 42px; height: 42px; }
+}
+.mget { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
+.mget:hover { background: var(--hover); color: var(--accent); }
+.mget svg { width: 19px; height: 19px; }

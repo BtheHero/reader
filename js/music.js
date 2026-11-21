@@ -35,7 +35,8 @@ const Music = (() => {
     queue: [], order: null, qi: -1, shuffle: false, repeat: "off",
     playing: false, counted: false, listened: 0, lastT: 0, errors: 0, url: "",
     scanning: null, nowOpen: false, panel: "lyrics", lrc: null, lrcAt: -1,
-    tg: null                          // { token, bot, owner, offset, seen } your Telegram bot (this device only)
+    tg: null,                         // { token, bot, owner, offset, seen } your Telegram bot (this device only)
+    dlBot: ""                         // a Telegram bot that downloads songs by name (its @username)
   };
   const isTg = (id) => String(id).startsWith("tg:");                // a song kept in this browser (from Telegram)
   function clearFolderTracks() { for (const id of [...M.tracks.keys()]) if (!isTg(id)) M.tracks.delete(id); }
@@ -56,7 +57,7 @@ const Music = (() => {
   function save() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => Store.set("music", {
-      v: 1, tracks: [...M.tracks.values()], playlists: M.playlists, artists: M.artists, source: M.source, tg: M.tg,
+      v: 1, tracks: [...M.tracks.values()], playlists: M.playlists, artists: M.artists, source: M.source, tg: M.tg, dlBot: M.dlBot,
       prefs: { tab: M.tab, sort: M.sort, shuffle: M.shuffle, repeat: M.repeat, queue: M.queue.slice(0, 3000), qi: M.qi, pos: audio.currentTime || 0 }
     }).catch(() => {}), 500);
   }
@@ -764,7 +765,7 @@ const Music = (() => {
     chips.textContent = "";
     for (const [k, label] of TABS) {
       if (k !== "home" && !M.tracks.size) continue;
-      const b = el("button", "gchip" + (M.tab === k && !M.stack.length ? " active" : ""), label);
+      const b = el("button", "gchip" + (M.tab === k && !M.stack.length && !M.query.trim() ? " active" : ""), label);
       b.type = "button"; b.dataset.tab = k;
       chips.append(b);
     }
@@ -788,6 +789,7 @@ const Music = (() => {
     }
     const top = M.stack[M.stack.length - 1];
     if (top) return /^(dz|chart)/.test(top.kind) ? remoteDetail(body, top) : detail(body, top);
+    if (M.query.trim()) return searchPage(body, M.query.trim());
     if (M.tab === "home") return home(body);
     if (!M.tracks.size) {
       if (!M.scanning) body.append(el("div", "empty", !M.source ? "No songs yet." : M.listed ? "No music files in “" + M.source.name + "”." : "Loading your library…"));
@@ -1045,6 +1047,7 @@ const Music = (() => {
     if (!b) return;
     const wasDeep = M.stack.length;
     M.tab = b.dataset.tab; M.stack = [];
+    if (M.query) { M.query = ""; $("m-q").value = ""; $("m-searchbox").hidden = true; }
     save(); render();
     $("m-scroll").scrollTop = 0;
     if (wasDeep && history.state && history.state.music) history.go(-wasDeep);
@@ -1261,14 +1264,25 @@ const Music = (() => {
     if (startAt) audio.addEventListener("loadedmetadata", () => { audio.currentTime = startAt; }, { once: true });
     M.counted = false; M.listened = 0; M.lastT = startAt || 0; M.lrc = null; M.lrcAt = -1; M.resumeAt = 0;
     audio.play().catch(() => {});
-    document.body.classList.add("musicking");
-    $("m-bar").hidden = false;
+    showBar();
     markCurrent();
     barUi();
     mediaSession();
     wantInfo(t, true);
     if (M.nowOpen) { nowUi(); panel(); }
     save();
+  }
+
+  // The bar, or (minimized) a small pill with play / pause, open and close; the music keeps playing either way
+  function showBar() {
+    $("m-bar").hidden = false;
+    document.body.classList.add("musicking");
+    $("m-mini").hidden = !document.body.classList.contains("musichide");
+  }
+  function hideBar(on) {
+    document.body.classList.toggle("musichide", on);
+    $("m-mini").hidden = !on || $("m-bar").hidden;
+    barUi();
   }
 
   function markCurrent() {
@@ -1296,8 +1310,7 @@ const Music = (() => {
     if (!t) return;
     if (!audio.src || audio.src !== M.url || !M.url) return playAt(M.qi, M.resumeAt || 0);
     A.stopOthers();
-    $("m-bar").hidden = false;
-    document.body.classList.add("musicking");
+    showBar();
     audio.play().catch(() => playAt(M.qi, audio.currentTime));
   }
   function toggle() { if (audio.paused) resume(); else audio.pause(); }
@@ -1306,7 +1319,8 @@ const Music = (() => {
     if (!audio.paused) audio.pause();
     M.playing = false;
     $("m-bar").hidden = true;
-    document.body.classList.remove("musicking");
+    $("m-mini").hidden = true;
+    document.body.classList.remove("musicking", "musichide");
     closeNow();
     if ("mediaSession" in navigator && navigator.mediaSession.metadata && M.sessionOn) {
       for (const a of ["play", "pause", "previoustrack", "nexttrack", "seekto"]) { try { navigator.mediaSession.setActionHandler(a, null); } catch (e) { /* fine */ } }
@@ -1387,7 +1401,8 @@ const Music = (() => {
     $("mb-sub").textContent = t.artist || "Unknown artist";
     const art = artOf(t);
     $("mb-art").replaceWith(Object.assign(artEl(art, "mb-art", t.album || t.title), { id: "mb-art" }));
-    $("mb-play").innerHTML = M.playing ? PAUSE : PLAY;
+    $("mb-play").innerHTML = $("mm-play").innerHTML = M.playing ? PAUSE : PLAY;
+    $("mm-play").setAttribute("aria-label", M.playing ? "Pause" : "Play");
     $("mb-play").setAttribute("aria-label", M.playing ? "Pause" : "Play");
     $("mb-like").classList.toggle("on", !!t.liked);
     $("mb-like").setAttribute("aria-pressed", !!t.liked);
@@ -1535,6 +1550,10 @@ const Music = (() => {
   $("mb-prev").onclick = prev;
   $("mb-like").onclick = () => { const t = cur(); if (t) like(t); };
   $("mb-close").onclick = () => stop();
+  $("mb-hide").onclick = () => hideBar(true);
+  $("mm-open").onclick = () => hideBar(false);
+  $("mm-play").onclick = toggle;
+  $("mm-close").onclick = () => stop();
   $("mb-info").onclick = openNow;
   $("mb-art-btn").onclick = openNow;
   $("mn-close").onclick = () => closeNow();
@@ -1566,7 +1585,7 @@ const Music = (() => {
     if (!box.hidden) $("m-q").focus(); else if (M.query) { M.query = ""; $("m-q").value = ""; render(); }
   };
   let qTimer = 0;
-  $("m-q").addEventListener("input", (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { M.query = e.target.value.trim(); if (M.stack.length) { M.stack = []; } render(); }, 150); });
+  $("m-q").addEventListener("input", (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { M.query = e.target.value.trim(); if (M.stack.length) { M.stack = []; } render(); $("m-scroll").scrollTop = 0; }, 350); });
 
   // ---------- Home: your music, and what's popular (Deezer and Apple Music charts) ----------
   // Charts and playlists come from Deezer's public API (through BT Feeder's fetcher: Deezer doesn't allow browsers)
@@ -1583,6 +1602,8 @@ const Music = (() => {
 
   async function discover(force) {
     if (DISC.busy || (!force && DISC.at && Date.now() - DISC.at < 3 * 3600000)) return;
+    // After a failure (offline…), not again for two minutes: drawing Home asks for the charts
+    if (!force && DISC.failedAt && Date.now() - DISC.failedAt < 120000) return;
     DISC.busy = true;
     const cc = country();
     try {
@@ -1607,7 +1628,7 @@ const Music = (() => {
       DISC.at = Date.now();
       DISC.failed = false;
       Store.set("musicdisc", { at: DISC.at, dz: DISC.dz, playlists: DISC.playlists, albums: DISC.albums, apple: DISC.apple, cc: DISC.cc }).catch(() => {});
-    } catch (e) { DISC.failed = true; }
+    } catch (e) { DISC.failed = true; DISC.failedAt = Date.now(); }
     finally { DISC.busy = false; }
     if (document.body.classList.contains("inmusic") && M.tab === "home" && !M.stack.length) render();
   }
@@ -1637,6 +1658,7 @@ const Music = (() => {
       if (kind) b.dataset.open = kind + "|" + x.id;
       else if (x.list) b.dataset.list = x.list;
       else if (x.album) b.dataset.album = x.album;
+      else if (x.artist) b.dataset.artist = x.artist;
       b.append(x.heart ? heartCover() : artEl(x.art, "", x.title), el("b", null, x.title), el("span", null, x.sub || ""));
       row.append(b);
     }
@@ -1662,6 +1684,12 @@ const Music = (() => {
     play.setAttribute("aria-label", mine ? "Play" : "Play preview");
     play.innerHTML = pv.key === x.key && !pvAudio.paused ? PAUSE : PLAY;
     if (!mine && !x.preview) play.disabled = true;
+    if (!mine && M.dlBot) {
+      const get = el("button", "mget");
+      get.type = "button"; get.title = "Get it with @" + M.dlBot; get.setAttribute("aria-label", get.title);
+      get.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>';
+      li.append(get);
+    }
     const more = el("button", "mmore");
     more.type = "button"; more.setAttribute("aria-label", "More");
     more.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>';
@@ -1723,6 +1751,18 @@ const Music = (() => {
     else d = remotes.get(key);
     if (!d) {
       body.append(el("p", "mempty-txt", "Loading…"));
+      if (top.kind === "dzartist") {
+        // An artist: who, and their most popular songs
+        let a = null, tops = null;
+        try {
+          const [r1, r2] = await A.fetchBatch(["https://api.deezer.com/artist/" + encodeURIComponent(top.id), "https://api.deezer.com/artist/" + encodeURIComponent(top.id) + "/top?limit=50"]);
+          a = r1 && r1.ok ? JSON.parse(r1.body) : null; tops = r2 && r2.ok ? JSON.parse(r2.body) : null;
+        } catch (e) { /* below */ }
+        if (!a || a.error) { if (M.stack[M.stack.length - 1] === top) body.lastChild.textContent = a ? "Not found on Deezer." : "Couldn't load it (offline?)."; return; }
+        remotes.set(key, { title: a.name, sub: [a.nb_fan ? a.nb_fan.toLocaleString() + " fans" : "", a.nb_album ? plural(a.nb_album, "album") : ""].filter(Boolean).join(" · "), art: a.picture_big || a.picture_medium, url: a.link, tracks: ((tops && tops.data) || []).map(x => fromDeezer(x)) });
+        if (M.stack[M.stack.length - 1] === top) render();
+        return;
+      }
       const kind = top.kind === "dzplaylist" ? "playlist" : "album";
       const j = await getJSON("https://api.deezer.com/" + kind + "/" + encodeURIComponent(top.id), true);
       if (!j || j.error) { if (M.stack[M.stack.length - 1] === top) { body.lastChild.textContent = j === undefined ? "Couldn't load it (offline?)." : "Not found on Deezer."; } return; }
@@ -1734,9 +1774,9 @@ const Music = (() => {
       return;
     }
     const head = el("div", "mhero");
-    head.append(artEl(d.art || (d.tracks[0] && d.tracks[0].art), "big", d.title));
+    head.append(artEl(d.art || (d.tracks[0] && d.tracks[0].art), "big" + (top.kind === "dzartist" ? " round" : ""), d.title));
     const info = el("div", "mhero-info");
-    info.append(el("span", "mkind", top.kind === "dzalbum" ? "Album" : top.kind === "chart" ? "Chart" : "Playlist"), el("h2", null, d.title), el("p", "mmeta", d.sub || ""));
+    info.append(el("span", "mkind", top.kind === "dzalbum" ? "Album" : top.kind === "dzartist" ? "Artist · top songs" : top.kind === "chart" ? "Chart" : "Playlist"), el("h2", null, d.title), el("p", "mmeta", d.sub || ""));
     const have = d.tracks.map(owned).filter(Boolean);
     info.append(el("p", "mmeta", have.length ? have.length + " of " + d.tracks.length + " in your music" : "None of these are in your music yet"));
     const row = el("div", "mrow");
@@ -1760,11 +1800,68 @@ const Music = (() => {
     body.append(remoteList(d.tracks, top.kind !== "dzalbum"));
   }
 
+  // ---------- Search: your music and everywhere ----------
+  // Your library first (songs, artists, albums), then Deezer's whole catalogue (songs with previews, albums, artists),
+  // or iTunes' when Deezer can't be reached. Results are kept for the session.
+  const found = new Map();                // query -> { tracks, albums, artists } | "busy" | null (failed)
+  async function searchOnline(q) {
+    if (found.has(q)) return;
+    found.set(q, "busy");
+    const e = encodeURIComponent(q);
+    let out = null;
+    try {
+      const res = await A.fetchBatch(["https://api.deezer.com/search?q=" + e + "&limit=30", "https://api.deezer.com/search/album?q=" + e + "&limit=12", "https://api.deezer.com/search/artist?q=" + e + "&limit=12"]);
+      const j = res.map(r => { try { return r && r.ok ? JSON.parse(r.body) : null; } catch (err) { return null; } });
+      if (j[0] && !j[0].error) out = {
+        tracks: (j[0].data || []).map(x => fromDeezer(x)),
+        albums: ((j[1] && j[1].data) || []).map(x => ({ id: x.id, title: x.title, art: x.cover_medium || x.cover_big, sub: x.artist ? x.artist.name : "" })),
+        artists: ((j[2] && j[2].data) || []).map(x => ({ id: x.id, title: x.name, art: x.picture_medium || x.picture_big, sub: x.nb_fan ? x.nb_fan.toLocaleString() + " fans" : "Artist" }))
+      };
+    } catch (err) { /* iTunes below */ }
+    if (!out) {
+      const d = await getJSON("https://itunes.apple.com/search?" + new URLSearchParams({ term: q, media: "music", entity: "song", limit: "30" }));
+      if (d) out = { tracks: (d.results || []).map(r => ({ key: "it:" + r.trackId, title: r.trackName || "", artist: r.artistName || "", album: r.collectionName || "",
+        art: (r.artworkUrl100 || "").replace(/\/\d+x\d+bb\./, "/300x300bb."), preview: r.previewUrl || "", dur: (r.trackTimeMillis || 0) / 1000, url: r.trackViewUrl || "", src: "Apple Music" })), albums: [], artists: [] };
+    }
+    found.set(q, out);
+    if (M.query.trim() === q && !M.stack.length && document.body.classList.contains("inmusic")) render();
+  }
+
+  function searchPage(body, q) {
+    const nq = norm(q);
+    const mine = songs().filter(t => matches(t, nq)).sort((a, b) => (b.plays || 0) - (a.plays || 0));
+    const arts = artists().filter(a => norm(a.name).includes(nq)).slice(0, 12);
+    const albs = albums().filter(a => norm(a.name + " " + a.artist).includes(nq)).slice(0, 12);
+    if (mine.length || arts.length || albs.length) {
+      section(body, "In your music");
+      if (mine.length) body.append(songList(mine.slice(0, 30)));
+      const both = [...arts.map(a => ({ artist: a.name, art: (M.artists[a.name.toLowerCase()] || {}).pic || albumArt(a.tracks), title: a.name, sub: "Artist · " + plural(a.tracks.length, "song") })),
+        ...albs.map(a => ({ album: a.key, art: albumArt(a.tracks), title: a.name, sub: "Album · " + a.artist }))];
+      if (both.length) body.append(cards(both));
+    }
+    const head = el("div", "mshead");
+    head.append(el("h3", "msec", "Everywhere"));
+    const get = el("button", "mlink small", M.dlBot ? "Get “" + (q.length > 24 ? q.slice(0, 24) + "…" : q) + "” with @" + M.dlBot : "Get it with your Telegram bot");
+    get.type = "button";
+    get.onclick = () => askBot(q);
+    head.append(get);
+    body.append(head);
+    const r = found.get(q);
+    if (r === undefined) searchOnline(q);
+    if (r === undefined || r === "busy") return body.append(el("p", "mempty-txt", "Searching…"));
+    if (!r) return body.append(el("p", "mempty-txt", "Couldn't search online (offline?)."));
+    if (!r.tracks.length && !r.albums.length && !r.artists.length) return body.append(el("p", "mempty-txt", "Nothing found for “" + q + "”."));
+    if (r.artists.length) body.append(cards(r.artists, "dzartist"));
+    if (r.tracks.length) body.append(remoteList(r.tracks, false));
+    if (r.albums.length) { section(body, "Albums"); body.append(cards(r.albums, "dzalbum")); }
+  }
+
   // A platform's song: yours in full when you have it, else its preview
   function remoteClick(row, target) {
     const x = REM.get(row.dataset.key);
     if (!x) return;
     if (target.closest(".mmore")) return remoteMenu(x);
+    if (target.closest(".mget")) return askBot(x.artist + " - " + x.title);
     const mine = owned(x);
     if (mine) {
       const ul = row.closest(".msongs");
@@ -1791,6 +1888,7 @@ const Music = (() => {
       mine ? { label: "Play from your music", fn: () => playList([mine.id], 0, false) } : null,
       mine ? { label: "Add to playlist…", fn: () => toPlaylist(mine) } : null,
       !mine && x.preview ? { label: "Play 30-second preview", fn: () => pvPlay(x) } : null,
+      !mine ? { label: M.dlBot ? "Get it with @" + M.dlBot : "Get it with your Telegram downloader bot…", fn: () => askBot(x.artist + " - " + x.title) } : null,
       ...links(x).map(([name, url]) => ({ label: "Listen on " + name, fn: () => window.open(url, "_blank", "noopener") })),
       { label: "Search " + (mine ? mainArtist(mine) : x.artist) + " in your music", fn: () => { $("m-searchbox").hidden = false; $("m-q").value = x.artist; M.query = x.artist; M.stack = []; M.tab = "songs"; render(); } }
     ]);
@@ -1824,6 +1922,29 @@ const Music = (() => {
     const r = pv.key && document.querySelector('.mrem[data-key="' + CSS.escape(pv.key) + '"]');
     if (r) r.style.setProperty("--pv", (pvAudio.duration ? pvAudio.currentTime / pvAudio.duration * 100 : 0) + "%");
   });
+
+  // ---------- A Telegram bot that downloads songs by name ----------
+  // Bots can't message other bots, so BT Feeder opens your downloader bot in Telegram with the song's name already
+  // typed (t.me/<bot>?text=…; also copied, in case that Telegram app doesn't fill it in): you press Send. Forward
+  // the file it sends back to your BT Feeder bot and it's in your music.
+  async function askBot(text) {
+    if (!M.dlBot) { await setDlBot(); if (!M.dlBot) return; }
+    try { await navigator.clipboard.writeText(text); } catch (e) { /* not allowed: the link fills it in anyway */ }
+    window.open("https://t.me/" + M.dlBot + "?text=" + encodeURIComponent(text), "_blank", "noopener");
+    A.toast("Sent to Telegram: press Send in @" + M.dlBot + (M.tg ? ", then forward the song to @" + M.tg.bot : ""));
+  }
+  async function setDlBot() {
+    const r = await A.ask({ title: "Music downloader bot",
+      text: "The Telegram bot you use to download songs by name. BT Feeder opens it with the song's name typed in; you press Send." + (M.tg ? " Forward the song it sends you to @" + M.tg.bot + " to add it to your music." : " Connect your own bot under “Songs from Telegram” to add what it sends you to your music."),
+      input: M.dlBot ? "@" + M.dlBot : "", placeholder: "@SomeMusicBot", ok: "Save", extra: M.dlBot ? "Remove" : "" });
+    if (r.action === "cancel") return;
+    const name = r.action === "extra" ? "" : r.value.replace(/^(https?:\/\/)?(t\.me\/|telegram\.me\/)?@?/i, "").replace(/[/?].*$/, "");
+    if (name && !/^[A-Za-z]\w{3,31}$/.test(name)) return A.toast("That isn't a Telegram username");
+    M.dlBot = name;
+    save();
+    if (document.body.classList.contains("inmusic")) render();
+    A.toast(name ? "Downloader bot: @" + name : "Downloader bot removed");
+  }
 
   // ---------- Your Telegram bot: songs you send or forward to it ----------
   // You make a bot with @BotFather and paste its token. BT Feeder asks Telegram for the bot's new messages when the
@@ -1961,6 +2082,7 @@ const Music = (() => {
       return menu("Telegram bot", "@" + M.tg.bot + (M.tg.ownerName ? " · listening to " + M.tg.ownerName : " · send it a message to start"), [
         { label: "Check for new songs now", fn: () => tgPoll(true) },
         { label: "Open @" + M.tg.bot + " in Telegram", fn: () => window.open("https://t.me/" + M.tg.bot, "_blank", "noopener") },
+        { label: M.dlBot ? "Downloader bot: @" + M.dlBot + "…" : "Set your music downloader bot…", fn: () => setDlBot() },
         { label: "Connect another bot…", fn: () => connectBot() },
         { label: "Disconnect", danger: true, fn: () => { M.tg = null; save(); A.toast("Telegram bot disconnected"); render(); } }
       ]);
@@ -1998,6 +2120,7 @@ const Music = (() => {
         M.artists = d.artists || {};
         M.source = d.source || null;
         M.tg = d.tg || null;
+        M.dlBot = d.dlBot || "";
         const p = d.prefs || {};
         M.sort = p.sort || "title"; M.shuffle = !!p.shuffle; M.repeat = p.repeat || "off";
         M.queue = (p.queue || []).filter(id => M.tracks.has(id)); M.qi = Math.min(p.qi == null ? -1 : p.qi, M.queue.length - 1); M.resumeAt = p.pos || 0;
@@ -2007,7 +2130,7 @@ const Music = (() => {
       if (M.source && M.source.kind === "dir" && !M.dir) M.source = null;
     } catch (e) { /* nothing saved */ }
     // The last song, ready to carry on (paused)
-    if (cur()) { barUi(); $("m-bar").hidden = false; document.body.classList.add("musicking"); }
+    if (cur()) { barUi(); showBar(); }
     render();
     // Songs sent to your Telegram bot: now, and every two minutes while BT Feeder is open
     setTimeout(() => tgPoll(false), 3000);
@@ -2019,6 +2142,8 @@ const Music = (() => {
     show() { ensureListed(); render(); tgPoll(false); },
     telegram: () => telegram(),
     telegramLabel: () => M.tg ? "@" + M.tg.bot : "Off",
+    dlBot: () => setDlBot(),
+    dlBotLabel: () => M.dlBot ? "@" + M.dlBot : "Off",
     back() {
       if (M.nowOpen) { closeNow(true); return true; }
       if (document.body.classList.contains("inmusic") && M.stack.length) { M.stack.pop(); render(); return true; }

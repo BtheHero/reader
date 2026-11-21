@@ -2616,7 +2616,36 @@
     if (history.state && history.state.drawer) history.back();
   }
 
+  // Popups (every <dialog>: menus, questions, the X account card…) get a step in the history while open, so Back
+  // closes them instead of leaving the page (or closing the Android app). One step for however many are open;
+  // closing one any other way removes it, unless another popup took its place straight away.
+  let dialogStep = false, closingByBack = false, dialogBack = false;
+  const showModal = HTMLDialogElement.prototype.showModal;
+  HTMLDialogElement.prototype.showModal = function () {
+    showModal.call(this);
+    if (!dialogStep) { dialogStep = true; history.pushState({ dialog: true }, ""); }
+  };
+  document.addEventListener("close", (e) => {
+    if (!(e.target instanceof HTMLDialogElement) || closingByBack) return;
+    setTimeout(() => {
+      if (!dialogStep || document.querySelector("dialog[open]")) return;
+      dialogStep = false;
+      if (history.state && history.state.dialog) { dialogBack = true; history.back(); }
+    }, 0);
+  }, true);
+  function closeDialogs() {
+    const open = [...document.querySelectorAll("dialog[open]")];
+    if (!open.length) return false;
+    closingByBack = true;
+    open.forEach(d => d.close());
+    closingByBack = false;
+    dialogStep = false;
+    return true;
+  }
+
   addEventListener("popstate", () => {
+    if (dialogBack) { dialogBack = false; return; }     // our own step back after a popup closed: nothing else to do
+    if (closeDialogs()) return;
     if (LB.closing) { LB.closing = false; return; }
     if (!$("lightbox").hidden) return closeLightbox(true);
     if (document.body.classList.contains("drawer")) { document.body.classList.remove("drawer"); return; }
@@ -2684,7 +2713,8 @@
       row("Reddit Client ID", "Read subreddits through Reddit's API (your own app) instead of RSS", { value: settingValue("reddit-btn"), go: click("reddit-btn") })
     ]);
     section("Music", [
-      row("Songs from Telegram", "Send or forward songs to your own Telegram bot: they're added to your music", { value: Music.telegramLabel(), go: () => Music.telegram() })
+      row("Songs from Telegram", "Send or forward songs to your own Telegram bot: they're added to your music", { value: Music.telegramLabel(), go: () => Music.telegram() }),
+      row("Music downloader bot", "The Telegram bot that finds songs by name: ⤓ on a song opens it with the name typed in", { value: Music.dlBotLabel(), go: () => Music.dlBot() })
     ]);
     section("Your feeds", [
       row("Import feeds", "Add feeds from an OPML file", { go: click("import-btn") }),
