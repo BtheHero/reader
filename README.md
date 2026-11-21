@@ -14,7 +14,8 @@ Every push to `main` deploys. The feed fetcher is served at `/fetch` next to the
 A social-style timeline: posts as cards (picture, name, time, text, big image or video, and star / share / open
 actions), a row of the feeds you follow at the top (ringed when they have unread posts), and a profile page per feed.
 Tapping a post opens it over the timeline; back returns to the same place. Videos and podcast episodes play right in
-the timeline. On phones there's a bottom tab bar (Home, Videos, follow +, Starred, Following).
+the timeline. On phones there's a bottom tab bar (Home, Groups, ✓✓, Podcasts, Music); the accounts you follow open from
+the people button at the left of the top bar.
 
 ### Top bar and tabs
 
@@ -39,7 +40,12 @@ the timeline. On phones there's a bottom tab bar (Home, Videos, follow +, Starre
 ### Links, filters and groups
 
 - Links in posts are clickable in the timeline (the post's own links and bare web addresses; for X accounts also
-  @mentions and #hashtags). X reposts are labelled "↻ @account reposted". Hold-press (or right-click) a reposted or quoted account to follow it or block it; blocking hides its reposts and the posts quoting it (unblock under "Blocked accounts" in the menu).
+  @mentions and #hashtags). X reposts are labelled "↻ @account reposted".
+- **X account card:** tap any X account's name or picture (a post's account, a reposted or quoted one, an @mention) for
+  its card: picture, banner, bio, location, website, following / followers / posts, with **Follow** (or **See posts**
+  when you follow it), **Block** and **Open on X**. The bio and counts come from the account's Nitter page (one fetcher
+  request, three servers tried, kept for a day). Blocking hides its reposts and the posts quoting it (unblock on the
+  card or under "Blocked accounts" in the menu).
 - **Filters** (per feed, in its Edit dialog): hide posts containing words, only show posts containing words, only
   posts with pictures or video, and for X accounts hide reposts / replies. A feed can also be set to "Text only", which hides its pictures and videos. Hidden posts don't count as unread; the
   feed's profile shows how many are hidden.
@@ -108,6 +114,9 @@ The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in
   this goes against YouTube's terms, so leave it off in any Play Store version).
 - **Videos** view lists every video; **Shorts: Hidden** (bottom of the sidebar) hides YouTube Shorts everywhere.
 - **Wide view** (`w`, or the corners button) gives the article or video the whole window.
+- A video **pauses when you scroll it out of sight** (in the timeline or an open post), except in fullscreen.
+- **Live streams:** where you were in a live stream is kept, and once it's over its recording resumes from there
+  (in Podcasts and in the timeline). While it's still live, the player starts at the live edge.
 - Video and audio files attached to ordinary feeds (podcasts, video blogs) play in the built-in player, with the same
   resume and timestamp features.
 
@@ -133,6 +142,31 @@ The Firebase SDK (11.10.0) loads from www.gstatic.com only once someone signs in
   stream (`adaptiveFormats`, AAC first), which keeps going with the screen off and has lock-screen / headphone
   controls. Without it, YouTube's player plays the episode in a small window in the bar (YouTube may pause it when
   the screen locks).
+
+## Music
+
+The **Music** tab plays songs from a folder on your device.
+
+- **Choose music folder** (or the folder button in its top bar): in the Android app, Android's folder picker (access
+  is kept; the app lists the folder and hands each file to the page at `__music/?id=…`, seeking included); in Chrome /
+  Edge on a computer, the folder is remembered and asked for again after a restart ("Allow"); in other browsers, its
+  files are readable until the page closes (the library is kept, pick the folder again to play).
+- Reads **MP3, M4A / AAC, FLAC, Ogg Vorbis, Opus, WAV, WebM** (and lists WMA, AIFF, ALAC… for devices that play them).
+  Tags and cover art come from the files themselves (`js/music.js` reads ID3v1/v2, Vorbis comments, MP4 atoms and WAV
+  INFO); files without tags are named from "Artist - Title" file names and Artist / Album folders.
+- **Recognising songs and info:** each song is looked up on the iTunes Search API (title, artist, album, year, genre,
+  cover); files without tags are recognised from their file name, and **Identify song…** (⋯ menu) lets you pick the
+  right match by hand. Artist pages add a picture and fan count (Deezer, through the fetcher) and a bio (Wikipedia).
+  **Lyrics** come from [LRCLIB](https://lrclib.net), synced line by line when available (tap a line to jump there),
+  or from lyrics embedded in the file.
+- Tabs: Songs (sort by title, artist, album, recently added), Albums, Artists, Playlists, Liked, Most played,
+  Recently played. A play counts after 30 seconds (or half of a short song).
+- Player: a bar at the bottom (tap it for **Now playing**: big cover, seek, shuffle, repeat all / one, like, Lyrics,
+  About, Up next). ⋯ on a song: play next, add to queue, add to a playlist, like, go to album / artist, song info.
+  In the Android app it keeps playing with the screen off, with previous / play / next in the notification and on
+  headphones. Playing music stops a podcast, and the other way round.
+- Everything (library, likes, play counts, playlists, small cover pictures) stays in this browser's IndexedDB; the
+  files are never uploaded.
 
 ## X (Twitter)
 
@@ -186,7 +220,11 @@ a new build, and adds what a website can't do:
   yourself.)
 - Links to other sites open in their app (YouTube, X…) or the browser; Back closes what's open in BT Feeder.
 - OPML import (file picker) and export (saved to Downloads), fullscreen video.
-- Podcasts keep playing with the screen off: while something plays, a notification keeps the app running.
+- Podcasts and music keep playing with the screen off: while something plays, a notification keeps the app running.
+- **The screen turns off normally.** Android's WebView keeps the screen on whenever any video plays (which included
+  podcasts, played through YouTube's player). The app ignores that (`ReaderWebView`) and keeps the screen on only
+  while the page says you're watching a video (a video playing in a post, or a podcast's video made big).
+- The Music tab's folder (see Music).
 
 Built by GitHub Actions (`.github/workflows/android.yml`) on every change under `android/`, and published at
 **https://github.com/ilyasbt/reader/releases/tag/app-latest** → `BT-Feeder.apk`. Signing uses the repository secrets

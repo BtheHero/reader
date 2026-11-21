@@ -623,6 +623,7 @@
   // already read included; in Podcasts, episodes become played. If read posts were being shown, they're hidden
   // again. Undo puts it all back.
   function markAllRead() {
+    if (S.view === "music") return Music.shuffleAll();
     const pods = S.view === "podcasts";
     // Podcasts: episodes you've started (or the one playing) stay; swipe one away to remove it
     const started = (i) => pods && ((i.pos > 5 && !i.watched) || (Pod.item && Pod.item.key === i.key));
@@ -938,6 +939,7 @@
   const hiddenShort = (it) => S.settings.hideShorts && it.video && it.video.short;
 
   function renderList(keepScroll) {
+    if (S.view === "music") return;   // the Music tab draws itself (music.js)
     const ul = $("items");
     const top = keepScroll ? $("timeline").scrollTop : 0;
     S.shown = viewItems().map(i => i.key);
@@ -1092,7 +1094,7 @@
     const prof = rp ? xProfile(rp) : null;
     const name = rp ? el("a", "pname", prof && prof.name ? prof.name : "@" + rp) : el("button", "pname", f.title);
     if (rp) { name.href = "https://x.com/" + rp; name.target = "_blank"; name.rel = "noopener noreferrer"; name.dataset.xh = rp; }
-    else { name.type = "button"; name.dataset.view = "feed:" + f.id; }
+    else { name.type = "button"; name.dataset.view = "feed:" + f.id; if (f.x) name.dataset.xh = f.x; }
     const time = el("time", null, ago(it.date));
     time.dateTime = new Date(it.date).toISOString();
     time.title = new Date(it.date).toLocaleString();
@@ -1108,7 +1110,7 @@
     who.append(name, sub);
     let face = avatar(rp ? repostFeed(rp, prof) : f);
     if (rp) { const a = el("a", "rpface"); a.href = "https://x.com/" + rp; a.target = "_blank"; a.rel = "noopener noreferrer"; a.dataset.xh = rp; a.append(face); face = a; }
-    else face.dataset.view = "feed:" + f.id;
+    else { face.dataset.view = "feed:" + f.id; if (f.x) face.dataset.xh = f.x; }
     head.append(face, who, el("span", "udot"));
     li.append(head);
 
@@ -1235,7 +1237,7 @@
     let last = 0, m;
     while ((m = re.exec(text))) {
       if (m[1]) { frag.append(text.slice(last, m.index), linkEl(m[1], m[1])); }
-      else if (m[3]) { frag.append(text.slice(last, m.index) + m[2], linkEl("https://x.com/" + m[3], "@" + m[3])); }
+      else if (m[3]) { const a = linkEl("https://x.com/" + m[3], "@" + m[3]); a.dataset.xh = m[3]; frag.append(text.slice(last, m.index) + m[2], a); }
       else if (m[5]) { frag.append(text.slice(last, m.index) + m[4], linkEl("https://x.com/hashtag/" + encodeURIComponent(m[5]), "#" + m[5])); }
       last = re.lastIndex;
     }
@@ -1529,14 +1531,19 @@
   // The YouTube player talks to the page with postMessage (the same messages its IFrame API uses), so we
   // can save where you stopped, mark videos watched and make timestamps in descriptions seek, without
   // loading any YouTube script into the page.
-  const player = { frame: null, media: null, item: null, ready: false, timer: 0, lastSave: 0 };
+  const player = { frame: null, media: null, item: null, ready: false, timer: 0, lastSave: 0, live: false, playing: false };
 
   function playerFor(it) {
     const v = it.video;
+    Music.pause();
     const wrap = el("div", "player" + (v.short ? " short" : "") + (v.audio ? " audio" : ""));
     player.item = it;
     player.ready = false;
-    const start = !it.watched && it.pos > 5 && (!it.dur || it.pos < it.dur - 10) ? Math.floor(it.pos) : 0;
+    player.playing = false;
+    player.live = isLiveNow(it);
+    // Where you stopped. Watched live, the stream's length was still growing: its recording resumes at that point
+    // (while it's still live, the player starts at the live edge)
+    const start = !it.watched && it.pos > 5 && (it.livePos ? !player.live : (!it.dur || it.pos < it.dur - 10)) ? Math.floor(it.pos) : 0;
     if (v.kind === "x") {
       // Just the video: its file comes from the post's Nitter page (saved once found). If no server has it,
       // fall back to X's embedded post.
@@ -1575,6 +1582,7 @@
       f.addEventListener("load", () => listen(f));
       player.frame = f;
       wrap.append(f);
+      watchPlayer(wrap);
       // A player that never answers was blocked (an extension or the browser's protection)
       setTimeout(() => {
         if (player.frame !== f || player.ready || !f.isConnected) return;
@@ -1595,6 +1603,8 @@
     if (it.image && !v.audio) m.poster = it.image;
     m.addEventListener("loadedmetadata", () => { if (start && !v.gif) m.currentTime = start; m.play().catch(() => {}); });
     if (!v.gif) {
+      m.addEventListener("play", () => { if (player.media === m) { player.playing = !v.audio; awake(); } });
+      m.addEventListener("pause", () => { if (player.media === m) { player.playing = false; awake(); } });
       m.addEventListener("timeupdate", () => progress(m.currentTime, m.duration));
       m.addEventListener("pause", () => progress(m.currentTime, m.duration, true));
       m.addEventListener("ended", () => finished());
@@ -1602,6 +1612,7 @@
     m.addEventListener("error", () => { if (onError) onError(); else wrap.replaceChildren(el("p", "muted", "This file can't be played here.")); });
     player.media = m;
     wrap.append(m);
+    watchPlayer(wrap);
   }
 
   // Find an X post's video file on Nitter: the feed's own server first, then two others, in one call
@@ -1692,7 +1703,9 @@
     if (wrap && wrap.classList.contains("ytcard")) { wrap.classList.remove("ytcard", "blocked"); wrap.querySelector(".ytnote")?.remove(); }
     if (d.event === "onError") return youtubeError(+d.info);
     const info = d.info || {};
+    if (info.videoData && typeof info.videoData.isLive === "boolean") player.live = info.videoData.isLive || isLiveNow(player.item || {});
     if (typeof info.currentTime === "number") progress(info.currentTime, info.duration);
+    if (typeof info.playerState === "number") { player.playing = info.playerState === 1 || info.playerState === 3; awake(); }
     if (info.playerState === 0) finished();
     if (info.playerState === 2) progress(info.currentTime, info.duration, true);
   });
@@ -1782,13 +1795,22 @@
     const it = player.item;
     if (!it || !isFinite(pos)) return;
     it.pos = pos;
-    if (dur && isFinite(dur)) it.dur = dur;
+    // Live: the length keeps growing, so only the position is kept (for the recording, once the stream is over)
+    if (player.live) it.livePos = true;
+    else {
+      if (dur && isFinite(dur)) it.dur = dur;
+      if (it.livePos && dur) delete it.livePos;
+    }
     // Save every few seconds while playing, and straight away on pause
     if (force || Date.now() - player.lastSave > 5000) { player.lastSave = Date.now(); saveItems([it]); }
   }
 
   function finished() {
     const it = player.item;
+    player.playing = false;
+    awake();
+    // A live stream that ended: its recording is still to watch, from where you were
+    if (player.live && it) { saveItems([it]); return; }
     if (!it || it.watched) return;
     it.watched = true;
     it.pos = 0;
@@ -1807,12 +1829,36 @@
     else if (player.item) saveItems([player.item]);
     clearInterval(player.timer);
     if (player.media) player.media.pause();
+    player.playing = false;
+    awake();
     // Refresh the list row so it shows the new progress bar / "Watched"
     if (player.item) {
       const row = document.querySelector('.post[data-key="' + CSS.escape(player.item.key) + '"]');
       if (row) row.replaceWith(itemRow(player.item));
     }
     player.frame = player.media = player.item = null;
+  }
+
+  // A video scrolled out of sight pauses (in the timeline and in an open post). Not in fullscreen.
+  const offscreen = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (e.isIntersecting || !e.target.isConnected || document.fullscreenElement) continue;
+      if (!(player.media && e.target.contains(player.media)) && !(player.frame && e.target.contains(player.frame))) { offscreen.unobserve(e.target); continue; }
+      if (player.media && !player.media.paused) player.media.pause();
+      else if (player.frame && player.playing) { command("pauseVideo"); player.playing = false; awake(); }
+    }
+  }, { threshold: 0 });
+  function watchPlayer(wrap) { offscreen.disconnect(); offscreen.observe(wrap); }
+
+  // The screen stays on only while you watch a video: one playing in a post, or a podcast's video made big in the
+  // player bar. Podcasts and music let it turn off. (The Android app does this; Android's WebView would otherwise
+  // keep the screen on for any video that plays, even a podcast's hidden one.)
+  let awakeOn = null;
+  function awake() {
+    const on = !!(player.item && player.playing) || (Pod.playing && Pod.mode === "yt" && document.body.classList.contains("podbig") && !document.body.classList.contains("podhide"));
+    if (on === awakeOn) return;
+    awakeOn = on;
+    try { if (window.ReaderApp && window.ReaderApp.keepAwake) window.ReaderApp.keepAwake(on); } catch (e) { /* older app */ }
   }
 
   // "1:23" / "1:02:03" in a video description become buttons that jump there
@@ -1876,7 +1922,7 @@
     const pods = podFeeds();
     // New videos, and streams that were live or scheduled when last checked (every 10 minutes, so a stream
     // shows as LIVE when it starts, and its recording becomes an episode once it's over)
-    const need = [...S.items.values()].filter(i => pods.has(i.feedId) && i.video && i.video.kind === "youtube" &&
+    const need = [...S.items.values()].filter(i => (pods.has(i.feedId) || i.livePos) && i.video && i.video.kind === "youtube" &&
       (i.ytDur == null || (i.ytLive && Date.now() - (i.ytChecked || 0) > 600000)));
     if (!need.length) return;
     podBusy = true;
@@ -2008,6 +2054,7 @@
     if (Pod.item && Pod.item.key === it.key) { if (at != null) podSeek(at); else podToggle(); return; }
     podStop();
     stopPlayer();
+    Music.stop();
     Pod.item = it;
     Pod.wantPlay = true;
     Pod.resumes = 0;
@@ -2104,6 +2151,7 @@
     }
     if (d.event === "initialDelivery" && Pod.rate !== 1) ytCommand("setPlaybackRate", [Pod.rate]);
     const info = d.info || {};
+    if (info.videoData && info.videoData.isLive === true && !Pod.live) { Pod.live = true; Pod.dur = 0; }
     if (typeof info.playerState === "number") {
       if (info.playerState === 1) { Pod.playing = true; Pod.resumes = 0; }
       if (info.playerState === 2) {
@@ -2122,9 +2170,17 @@
     const it = Pod.item;
     if (!it || !isFinite(t)) return;
     Pod.time = t;
-    if (Pod.live) { if (dur && isFinite(dur)) Pod.dur = dur; podUi(); return; }   // a live stream: nothing to remember
-    if (dur && isFinite(dur)) Pod.dur = dur;
     it.pos = t;
+    if (Pod.live) {
+      // A live stream: its length keeps growing. The position is kept, so its recording resumes there
+      if (dur && isFinite(dur)) Pod.dur = dur;
+      it.livePos = true;
+      if (force || Date.now() - Pod.lastSave > 5000) { Pod.lastSave = Date.now(); saveItems([it]); }
+      podUi();
+      return;
+    }
+    if (dur && isFinite(dur)) Pod.dur = dur;
+    delete it.livePos;
     if (Pod.dur) it.dur = Pod.dur;
     if (force || Date.now() - Pod.lastSave > 5000) { Pod.lastSave = Date.now(); saveItems([it]); }
     podUi();
@@ -2133,8 +2189,8 @@
   function podEnded() {
     const it = Pod.item;
     if (!it) return;
-    // A live stream that ended: its recording turns up later as an episode, unplayed
-    if (Pod.live) { Pod.playing = false; Pod.wantPlay = false; podUi(); toast("The live stream has ended"); return; }
+    // A live stream that ended: its recording turns up later as an episode, ready to resume where you were
+    if (Pod.live) { it.livePos = true; saveItems([it]); Pod.playing = false; Pod.wantPlay = false; podUi(); toast("The live stream has ended. Its recording will continue from here"); return; }
     it.watched = true;
     it.pos = 0;
     saveItems([it]);
@@ -2164,7 +2220,7 @@
 
   function podStop() {
     const it = Pod.item;
-    if (it && !Pod.live) { it.pos = Pod.time; saveItems([it]); }
+    if (it) { it.pos = Pod.time; if (Pod.live) it.livePos = true; saveItems([it]); }
     Pod.live = false;
     clearInterval(Pod.timer);
     if (Pod.media) { Pod.media.pause(); Pod.media.removeAttribute("src"); Pod.media.load(); }
@@ -2188,28 +2244,38 @@
     $("pb-rate").textContent = Pod.rate + "×";
     const row = Pod.item && document.querySelector('.post.pod[data-key="' + CSS.escape(Pod.item.key) + '"] .podplay');
     if (row) { row.textContent = Pod.playing ? "❚❚" : "▶"; row.setAttribute("aria-label", Pod.playing ? "Pause" : "Play"); }
-    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = Pod.playing ? "playing" : "paused";
+    if ("mediaSession" in navigator && Pod.item) navigator.mediaSession.playbackState = Pod.playing ? "playing" : "paused";
     tellApp();
+    awake();
   }
 
   // In the Android app: a media notification (and lock-screen / headphone controls) while the player is open,
   // which also keeps the app running so the episode plays on with the screen off
+  // (Music playing instead: the song, with previous / next buttons)
   let toldApp = "";
   function tellApp() {
     const app = window.ReaderApp;
     if (!app) return;
     const f = Pod.item ? feedById(Pod.item.feedId) : null;
-    const state = JSON.stringify([!!Pod.item, Pod.playing, Pod.item ? Pod.item.key : ""]);
+    const m = !Pod.item ? Music.nowPlaying() : null;
+    const active = !!Pod.item || !!m, playing = Pod.item ? Pod.playing : !!(m && m.playing);
+    const title = Pod.item ? Pod.item.title : m ? m.title : "", sub = Pod.item ? (f ? f.title : "") : m ? m.sub : "";
+    const state = JSON.stringify([active, playing, Pod.item ? Pod.item.key : m ? m.id : "", title]);
     if (state === toldApp) return;
     toldApp = state;
     try {
-      if (app.mediaState) app.mediaState(!!Pod.item, Pod.playing, Pod.item ? Pod.item.title : "", f ? f.title : "");
-      else app.setPlaying(Pod.playing, Pod.item ? Pod.item.title : "", f ? f.title : "");
+      if (app.mediaState2) app.mediaState2(active, playing, title, sub, m ? "music" : "podcast");
+      else if (app.mediaState) app.mediaState(active, playing, title, sub);
+      else app.setPlaying(playing, title, sub);
     } catch (e) { /* older app */ }
   }
 
-  // The app's notification and headphone buttons
-  window.ReaderPod = { toggle: () => podToggle(), back: () => podSeek(Pod.time - 15), fwd: () => podSeek(Pod.time + 30) };
+  // The app's notification and headphone buttons: the podcast, or the music when that's what's playing
+  window.ReaderPod = {
+    toggle: () => Pod.item ? podToggle() : Music.toggle(),
+    back: () => Pod.item ? podSeek(Pod.time - 15) : Music.prev(),
+    fwd: () => Pod.item ? podSeek(Pod.time + 30) : Music.next()
+  };
 
 
   // Lock screen / headphone controls (audio mode)
@@ -2242,6 +2308,7 @@
     document.body.classList.toggle("podhide", on);
     $("podmini").hidden = !on || $("podbar").hidden;
     if (on) setPodBig(false);
+    awake();
   }
   $("pb-hide").onclick = () => podHide(true);
   $("pm-open").onclick = () => podHide(false);
@@ -2251,6 +2318,7 @@
   function setPodBig(on) {
     $("podbar").classList.toggle("big", on);
     document.body.classList.toggle("podbig", on);
+    awake();
     $("pb-media").title = on ? "Make the video small" : "Make the video big";
   }
   $("pb-media").addEventListener("click", () => { if ($("pb-media").querySelector("iframe")) setPodBig(!$("podbar").classList.contains("big")); });
@@ -2302,30 +2370,111 @@
     return card;
   }
 
-  // ---------- Hold-press on a reposted or quoted account: follow it, or block it ----------
-  // Blocking hides that account's reposts and the posts quoting it, everywhere. Unblock from the menu.
-  let holdTimer = 0, holdAt = null, heldUntil = 0, menuOpen = false;
+  // ---------- An X account's card: tap (or hold-press) a name or picture ----------
+  // Its picture, name, bio and follower counts (from the account's Nitter page, kept for a day), with Follow
+  // (or See posts, when you follow it), Block and Open on X. Blocking hides that account's reposts and the posts
+  // quoting it, everywhere; unblock here or from the menu.
+  let holdTimer = 0, holdAt = null, heldUntil = 0;
   const xFollowed = (h) => S.feeds.find(f => f.x && f.x.toLowerCase() === h.toLowerCase());
+  const XB = new Map();          // handle (lower case) -> { bio, followers, following, posts, joined, location, website, banner, icon, name, at } | { failed, at }
 
-  async function accountMenu(h) {
-    if (menuOpen) return;
-    menuOpen = true;
-    heldUntil = Date.now() + 800;      // the click that ends the hold doesn't open the link
-    const prof = xProfile(h), followed = xFollowed(h);
-    const blocked = (S.settings.xBlocked || []).some(b => b.toLowerCase() === h.toLowerCase());
-    const r = await ask({ title: prof && prof.name ? prof.name : "@" + h, text: "@" + h + (followed ? " · You follow this account" : ""),
-      ok: followed ? "Open feed" : "Follow", extra: blocked ? "Unblock" : "Block" });
-    menuOpen = false;
-    if (r.action === "ok") {
-      if (followed) return selectView("feed:" + followed.id);
-      toast("Following @" + h + "…");
-      try {
-        const [found] = await lookupX(h);
-        $("add-group").value = ""; $("add-podcast").checked = false;
-        await addFeed(found.url, found.parsed, found.x);
-      } catch (e) { toast(e.message || "Couldn't follow @" + h); }
-    } else if (r.action === "extra") setBlocked(h, !blocked);
+  async function xBio(h) {
+    const k = h.toLowerCase(), had = XB.get(k);
+    if (had && Date.now() - had.at < (had.failed ? 3600000 : 86400000)) return had.failed ? null : had;
+    const f = xFollowed(h);
+    const hosts = [f ? host(f.url) : "", ...(await nitterHosts())].filter((x, i, a) => x && a.indexOf(x) === i).slice(0, 3);
+    let got = null;
+    try {
+      const results = await fetchBatch(hosts.map(x => "https://" + x + "/" + h));
+      for (let i = 0; i < results.length && !got; i++) if (results[i].ok) got = parseXBio(results[i].body, "https://" + hosts[i]);
+    } catch (e) { /* offline */ }
+    XB.set(k, got ? { ...got, at: Date.now() } : { failed: true, at: Date.now() });
+    return got;
   }
+
+  // A Nitter profile page -> what the card shows
+  function parseXBio(html, base) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const card = doc.querySelector(".profile-card");
+    if (!card) return null;
+    const txt = (sel) => { const n = doc.querySelector(sel); return n ? n.textContent.replace(/\s+/g, " ").trim() : ""; };
+    const abs = (u) => { try { return u ? new URL(u, base).href : ""; } catch (e) { return ""; } };
+    const bioEl = doc.querySelector(".profile-bio");
+    const site = doc.querySelector(".profile-website a");
+    const joined = doc.querySelector(".profile-joindate span[title]");
+    return {
+      name: txt(".profile-card-fullname"),
+      bio: bioEl ? bioEl.innerText || bioEl.textContent.trim() : "",
+      followers: txt(".profile-statlist .followers .profile-stat-num"),
+      following: txt(".profile-statlist .following .profile-stat-num"),
+      posts: txt(".profile-statlist .posts .profile-stat-num"),
+      location: txt(".profile-location"),
+      website: site ? site.getAttribute("href") || "" : "",
+      joined: joined ? joined.textContent.replace(/\s+/g, " ").trim() : "",
+      icon: abs((doc.querySelector(".profile-card-avatar img") || {}).getAttribute?.("src")),
+      banner: abs((doc.querySelector(".profile-banner img") || {}).getAttribute?.("src"))
+    };
+  }
+
+  let xpOpen = "";
+  async function accountMenu(h) {
+    heldUntil = Date.now() + 800;      // the click that ends a hold-press doesn't open anything
+    const d = $("xprof-dialog");
+    if (d.open && xpOpen === h) return;
+    xpOpen = h;
+    const fill = (bio) => {
+      if (xpOpen !== h) return;
+      const prof = xProfile(h) || {}, followed = xFollowed(h);
+      const blocked = (S.settings.xBlocked || []).some(b => b.toLowerCase() === h.toLowerCase());
+      const name = (bio && bio.name) || prof.name || (followed && followed.title) || "@" + h;
+      const box = $("xp-body");
+      box.textContent = "";
+      const banner = el("div", "xp-banner");
+      if (bio && bio.banner) { const b = el("img"); b.src = bio.banner; b.alt = ""; b.referrerPolicy = "no-referrer"; b.onerror = () => b.remove(); banner.append(b); }
+      const face = avatar(repostFeed(h, { name, icon: (bio && bio.icon) || prof.icon || (followed && followed.icon) }), "xp-av");
+      const head = el("div", "xp-head");
+      head.append(el("h2", null, name), el("span", "xp-handle", "@" + h + (followed ? " · You follow" : "")));
+      box.append(banner, face, head);
+      if (bio && bio.bio) { const p = el("p", "xp-bio"); linkify(p, bio.bio, { x: h }); box.append(p); }
+      const meta = [bio && bio.location, bio && bio.joined].filter(Boolean);
+      if (meta.length || (bio && bio.website)) {
+        const m = el("p", "xp-meta", meta.join(" · "));
+        if (bio && bio.website) { if (meta.length) m.append(" · "); m.append(linkEl(bio.website, shortUrl(bio.website))); }
+        box.append(m);
+      }
+      if (bio) {
+        const st = el("div", "xp-stats");
+        const stat = (n, label) => { if (!n) return; const s2 = el("span"); s2.append(el("b", null, n), " " + label); st.append(s2); };
+        stat(bio.following, "Following"); stat(bio.followers, "Followers"); stat(bio.posts, "Posts");
+        if (st.children.length) box.append(st);
+      } else box.append(el("p", "xp-loading", bio === null ? "Couldn't load the bio and follower count (the X servers didn't answer)." : "Loading bio and followers…"));
+      const acts = el("div", "actions xp-acts");
+      const follow = el("button", "btn primary", followed ? "See posts" : "Follow");
+      follow.type = "button";
+      follow.onclick = async () => {
+        d.close();
+        if (followed) return selectView("feed:" + followed.id);
+        toast("Following @" + h + "…");
+        try {
+          const [found] = await lookupX(h);
+          $("add-group").value = ""; $("add-podcast").checked = false;
+          await addFeed(found.url, found.parsed, found.x);
+        } catch (e) { toast(e.message || "Couldn't follow @" + h); }
+      };
+      const block = el("button", "btn" + (blocked ? "" : " danger"), blocked ? "Unblock" : "Block");
+      block.type = "button";
+      block.onclick = () => { d.close(); setBlocked(h, !blocked); };
+      const onX = el("a", "btn", "Open on X");
+      onX.href = "https://x.com/" + h; onX.target = "_blank"; onX.rel = "noopener noreferrer";
+      acts.append(block, el("span", "grow"), onX, follow);
+      box.append(acts);
+    };
+    fill(undefined);
+    if (!d.open) d.showModal();
+    fill(await xBio(h));
+  }
+  $("xp-close").onclick = () => $("xprof-dialog").close();
+  $("xprof-dialog").addEventListener("close", () => { xpOpen = ""; });
 
   function setBlocked(h, on) {
     const list = (S.settings.xBlocked || []).filter(b => b.toLowerCase() !== h.toLowerCase());
@@ -2351,7 +2500,14 @@
   for (const ev of ["pointerup", "pointercancel"]) document.addEventListener(ev, () => { clearTimeout(holdTimer); holdAt = null; });
   // A long-press on a phone, or a right-click
   document.addEventListener("contextmenu", (e) => { const t = heldTarget(e); if (!t) return; e.preventDefault(); clearTimeout(holdTimer); accountMenu(t.dataset.xh); });
-  document.addEventListener("click", (e) => { if (Date.now() < heldUntil && heldTarget(e)) { e.preventDefault(); e.stopPropagation(); } }, true);
+  // A tap opens the card too (instead of x.com, or the account's page)
+  document.addEventListener("click", (e) => {
+    const t = heldTarget(e);
+    if (!t || e.button > 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    e.preventDefault(); e.stopPropagation();
+    if (Date.now() < heldUntil) return;
+    accountMenu(t.dataset.xh);
+  }, true);
 
   // Muted words, from the menu: posts containing any of them are hidden everywhere
   function applyMuted() { const n = words(S.settings.mutedWords).length; $("muted-btn").textContent = "Muted words: " + (n || "None"); }
@@ -2440,7 +2596,12 @@
     stopPlayer();
     $("article").textContent = "";
     markActiveNav();
-    renderList();
+    document.body.classList.toggle("inmusic", view === "music");
+    if (view !== "music") Music.leave();
+    // In Music, the big button shuffles all your songs
+    $("tab-clear").setAttribute("aria-label", view === "music" ? "Shuffle all songs" : "Mark everything here as read and hide it");
+    $("tab-clear").innerHTML = view === "music" ? '<svg viewBox="0 0 24 24"><path d="M16 4h4v4M4 20 20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/></svg>' : '<svg viewBox="0 0 24 24"><path d="m3 13 4 4L17 7M10 16l1 1L21 7"/></svg>';
+    if (view === "music") Music.show(); else renderList();
     closeDrawer();
   }
 
@@ -2460,6 +2621,7 @@
     if (!$("lightbox").hidden) return closeLightbox(true);
     if (document.body.classList.contains("drawer")) { document.body.classList.remove("drawer"); return; }
     if (document.body.classList.contains("reading")) return closeArticle();
+    if (Music.back()) return;
     if (document.body.classList.contains("insettings")) closeSettings();
   });
 
@@ -2980,8 +3142,9 @@
     if (!b) return;
     if (b.dataset.view) { if (b.dataset.view === S.view) $("timeline").scrollTo({ top: 0, behavior: "smooth" }); else selectView(b.dataset.view); }
     else if (b.id === "tab-clear") markAllRead();
-    else if (b.id === "tab-feeds") openDrawer();
   });
+  // Phone: the accounts you follow, from the top bar
+  for (const id of ["feeds-top", "m-feeds", "m-menu-btn"]) $(id).onclick = openDrawer;
 
   let searchTimer = 0;
   $("search").addEventListener("input", (e) => {
@@ -2999,6 +3162,7 @@
       else if (e.key === "ArrowRight") stepLightbox(1);
       return;
     }
+    if (S.view === "music" && !document.body.classList.contains("reading")) return Music.key(e);
     if (e.target.closest("input, textarea, dialog") || e.metaKey || e.ctrlKey || e.altKey) {
       if (e.key === "Escape" && e.target.id === "search") { showSearch(false); e.target.blur(); }
       return;
@@ -3143,6 +3307,8 @@
     podDurations();
     refreshStale();
     Account.init(accountApi);
+    Music.init({ el, toast, ask, fetchBatch, tellApp, selectMusic: () => selectView("music"),
+      stopOthers: () => { stopPlayer(); if (Pod.item) $("pb-close").click(); } });
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
   }
   start();

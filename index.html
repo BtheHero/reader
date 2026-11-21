@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src * data: blob:; media-src *; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src * data: blob:; media-src * blob:; connect-src 'self' https:; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://platform.twitter.com; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>BT Feeder</title>
 <meta name="description" content="A simple, private RSS and Atom feed reader.">
@@ -34,6 +34,7 @@
       <button class="nav" data-view="all"><svg viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></svg><span>Home</span><b class="count" id="count-all"></b></button>
       <button class="nav" data-view="groups"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>Groups</span><b class="count" id="count-groups"></b></button>
       <button class="nav" data-view="podcasts"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4.5" height="6.5" rx="1.8"/><rect x="16" y="14" width="4.5" height="6.5" rx="1.8"/></svg><span>Podcasts</span><b class="count" id="count-podcasts"></b></button>
+      <button class="nav" data-view="music"><svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span>Music</span></button>
       <button class="nav" data-view="starred"><svg viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.8l-5.2 2.8 1-5.8-4.3-4.1 5.9-.8z"/></svg><span>Starred</span><b class="count" id="count-starred"></b></button>
       <button class="nav" id="settings-nav"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
     </nav>
@@ -61,6 +62,7 @@
     <section class="list" id="list" aria-label="Timeline">
       <header class="bar">
         <button class="icon menu" id="menu-btn" aria-label="Show feeds"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <button class="icon feedsbtn" id="feeds-top" title="Following" aria-label="Following"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5c.8-3.3 3.4-5 6.5-5s5.7 1.7 6.5 5"/><path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6M18 14.8c1.8.7 3 2.3 3.5 4.7"/></svg></button>
         <h1 id="view-title">Home</h1>
         <button class="icon" id="search-btn" title="Search (/)" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
         <button class="icon" id="unread-btn" title="Show unread only" aria-label="Show unread only" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5"/></svg></button>
@@ -93,6 +95,24 @@
         <div class="article" id="article"></div>
       </div>
     </article>
+    <section class="music" id="music" aria-label="Music">
+      <header class="bar">
+        <button class="icon menu" id="m-menu-btn" aria-label="Show feeds"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+        <button class="icon feedsbtn" id="m-feeds" title="Following" aria-label="Following"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5c.8-3.3 3.4-5 6.5-5s5.7 1.7 6.5 5"/><path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6M18 14.8c1.8.7 3 2.3 3.5 4.7"/></svg></button>
+        <h1 id="m-title">Music</h1>
+        <button class="icon" id="m-search" title="Search your music" aria-label="Search your music"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg></button>
+        <button class="icon" id="m-folder" title="Music folder" aria-label="Music folder"><svg viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg></button>
+      </header>
+      <div class="scroll" id="m-scroll">
+        <div class="mwrap">
+          <div class="search" id="m-searchbox" hidden><input type="search" id="m-q" placeholder="Search songs, artists, albums" aria-label="Search your music"></div>
+          <div class="gchips" id="m-chips"></div>
+          <div id="m-body"></div>
+        </div>
+      </div>
+      <input type="file" id="m-files" webkitdirectory directory multiple accept="audio/*" hidden>
+    </section>
+
     <section class="settings" id="settings" aria-label="Settings">
       <header class="bar">
         <button class="icon back" id="settings-back" aria-label="Back"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg></button>
@@ -107,7 +127,7 @@
     <button data-view="groups"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg><span>Groups</span><b class="tabcount" id="tabcount-groups"></b></button>
     <button class="fab" id="tab-clear" aria-label="Mark everything here as read and hide it"><svg viewBox="0 0 24 24"><path d="m3 13 4 4L17 7M10 16l1 1L21 7"/></svg></button>
     <button data-view="podcasts"><svg viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4.5" height="6.5" rx="1.8"/><rect x="16" y="14" width="4.5" height="6.5" rx="1.8"/></svg><span>Podcasts</span></button>
-    <button id="tab-feeds"><svg viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3.5"/><path d="M2.5 19.5c.8-3.3 3.4-5 6.5-5s5.7 1.7 6.5 5"/><path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6M18 14.8c1.8.7 3 2.3 3.5 4.7"/></svg><span>Following</span></button>
+    <button data-view="music"><svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span>Music</span></button>
   </nav>
 </div>
 
@@ -198,7 +218,7 @@
 <dialog id="blocked-dialog">
   <form method="dialog" id="blocked-form">
     <h2>Blocked accounts</h2>
-    <p>Their reposts, and posts quoting them, are hidden. Untick an account to unblock it. To block one, hold-press a reposted or quoted account.</p>
+    <p>Their reposts, and posts quoting them, are hidden. Untick an account to unblock it. To block one, tap an account's name or picture.</p>
     <p id="blocked-none">No blocked accounts.</p>
     <div id="blocked-choices" class="choices"></div>
     <div class="actions">
@@ -240,12 +260,66 @@
   </div>
 </div>
 
+<div class="mbar" id="m-bar" hidden>
+  <i class="mb-prog"><b id="mb-fill"></b></i>
+  <button class="mb-artbtn" id="mb-art-btn" aria-label="Now playing"><span id="mb-art"></span></button>
+  <button class="mb-info" id="mb-info" type="button"><b id="mb-title"></b><span id="mb-sub"></span></button>
+  <button class="pb-btn mb-like" id="mb-like" aria-label="Like"><svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></button>
+  <button class="pb-btn mb-prev" id="mb-prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 5v14M18 5 9 12l9 7z"/></svg></button>
+  <button class="pb-btn pb-play" id="mb-play" aria-label="Play"></button>
+  <button class="pb-btn" id="mb-next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M18 5v14M6 5l9 7-9 7z"/></svg></button>
+  <button class="pb-btn mb-close" id="mb-close" aria-label="Stop and close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+</div>
+
+<div class="mnow" id="m-now" role="dialog" aria-label="Now playing" hidden>
+  <div class="mn-bg" id="mn-bg"></div>
+  <header class="mn-bar">
+    <button class="icon" id="mn-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></button>
+    <span class="grow">Now playing</span>
+    <button class="icon" id="mn-more" aria-label="More"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg></button>
+  </header>
+  <div class="mn-main">
+    <div class="mn-left">
+      <span id="mn-art"></span>
+      <div class="mn-titlerow">
+        <div class="mn-titles">
+          <h2 id="mn-title"></h2>
+          <button class="mlink" id="mn-artist" type="button"></button>
+          <button class="mlink small" id="mn-album" type="button"></button>
+        </div>
+        <button class="pb-btn mn-like" id="mn-like" aria-label="Like"><svg viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg></button>
+      </div>
+      <input type="range" id="mn-seek" min="0" max="1000" value="0" aria-label="Position">
+      <div class="mn-times"><span id="mn-time">0:00</span><span id="mn-left"></span></div>
+      <div class="mn-ctrls">
+        <button class="pb-btn" id="mn-shuffle" aria-label="Shuffle"><svg viewBox="0 0 24 24"><path d="M16 4h4v4M4 20 20 4M20 16v4h-4M15 15l5 5M4 4l5 5"/></svg></button>
+        <button class="pb-btn" id="mn-prev" aria-label="Previous"><svg viewBox="0 0 24 24"><path d="M6 5v14M18 5 9 12l9 7z"/></svg></button>
+        <button class="pb-btn pb-play" id="mn-play" aria-label="Play"></button>
+        <button class="pb-btn" id="mn-next" aria-label="Next"><svg viewBox="0 0 24 24"><path d="M18 5v14M6 5l9 7-9 7z"/></svg></button>
+        <button class="pb-btn" id="mn-repeat" aria-label="Repeat"><svg viewBox="0 0 24 24"><path d="M17 2l3 3-3 3M3 11V9a4 4 0 0 1 4-4h13M7 22l-3-3 3-3M21 13v2a4 4 0 0 1-4 4H4"/></svg></button>
+      </div>
+    </div>
+    <div class="mn-right">
+      <div class="mn-tabs"><button data-panel="lyrics">Lyrics</button><button data-panel="info">About</button><button data-panel="queue">Up next</button></div>
+      <div class="mn-panel" id="mn-panel"></div>
+    </div>
+  </div>
+</div>
+
+<dialog id="m-menu"><div id="m-menu-body"></div></dialog>
+
+<dialog id="xprof-dialog" class="xprof">
+  <button type="button" class="icon xp-x" id="xp-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  <div id="xp-body"></div>
+</dialog>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="js/config.js"></script>
 <script src="js/parse.js"></script>
 <script src="js/store.js"></script>
 <script src="js/account.js"></script>
+<script src="js/music.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

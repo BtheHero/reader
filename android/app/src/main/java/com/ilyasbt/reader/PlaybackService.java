@@ -18,13 +18,14 @@ import android.os.PowerManager;
 import androidx.core.app.ServiceCompat;
 
 /**
- * Runs while the podcast player is open: a media notification (back 15 s / play-pause / forward 30 s), lock-screen
+ * Runs while the podcast player is open, or music plays: a media notification (back 15 s / play-pause / forward 30 s,
+ * or for music previous / play-pause / next), lock-screen
  * and headphone controls (a MediaSession), and it keeps Android from stopping Reader while audio plays with the
  * screen off. The playing itself happens in Reader's page; buttons are passed on to it (ReaderPod in app.js).
  */
 public class PlaybackService extends Service {
 
-    static final String EXTRA_ACTIVE = "active", EXTRA_PLAYING = "playing", EXTRA_TITLE = "title", EXTRA_SUBTITLE = "subtitle";
+    static final String EXTRA_ACTIVE = "active", EXTRA_PLAYING = "playing", EXTRA_TITLE = "title", EXTRA_SUBTITLE = "subtitle", EXTRA_MUSIC = "music";
     private static final String ACTION_TOGGLE = "com.ilyasbt.reader.TOGGLE";
     private static final String ACTION_BACK = "com.ilyasbt.reader.BACK";
     private static final String ACTION_FORWARD = "com.ilyasbt.reader.FORWARD";
@@ -33,7 +34,7 @@ public class PlaybackService extends Service {
 
     private PowerManager.WakeLock wakeLock;
     private MediaSession session;
-    private boolean playing;
+    private boolean playing, music;
     private String title = "Playing", subtitle = "";
 
     @Override
@@ -66,6 +67,7 @@ public class PlaybackService extends Service {
 
         if (intent != null) {
             playing = intent.getBooleanExtra(EXTRA_PLAYING, true);
+            music = intent.getBooleanExtra(EXTRA_MUSIC, false);
             String t = intent.getStringExtra(EXTRA_TITLE), s = intent.getStringExtra(EXTRA_SUBTITLE);
             if (t != null && !t.trim().isEmpty()) title = t;
             if (s != null) subtitle = s;
@@ -103,7 +105,7 @@ public class PlaybackService extends Service {
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager.getNotificationChannel(CHANNEL) == null) {
             NotificationChannel channel = new NotificationChannel(CHANNEL, "Playback", NotificationManager.IMPORTANCE_LOW);
-            channel.setDescription("Podcast controls while the player is open");
+            channel.setDescription("Podcast and music controls while something plays");
             channel.setShowBadge(false);
             manager.createNotificationChannel(channel);
         }
@@ -118,9 +120,9 @@ public class PlaybackService extends Service {
                 .setOngoing(playing)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setCategory(Notification.CATEGORY_TRANSPORT)
-                .addAction(action(android.R.drawable.ic_media_rew, "Back 15 seconds", ACTION_BACK, 1))
+                .addAction(music ? action(android.R.drawable.ic_media_previous, "Previous", ACTION_BACK, 1) : action(android.R.drawable.ic_media_rew, "Back 15 seconds", ACTION_BACK, 1))
                 .addAction(action(playing ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play, playing ? "Pause" : "Play", ACTION_TOGGLE, 2))
-                .addAction(action(android.R.drawable.ic_media_ff, "Forward 30 seconds", ACTION_FORWARD, 3))
+                .addAction(music ? action(android.R.drawable.ic_media_next, "Next", ACTION_FORWARD, 3) : action(android.R.drawable.ic_media_ff, "Forward 30 seconds", ACTION_FORWARD, 3))
                 .setStyle(new Notification.MediaStyle().setMediaSession(session.getSessionToken()).setShowActionsInCompactView(0, 1, 2))
                 .build();
     }
