@@ -2687,6 +2687,13 @@
       row("Import feeds", "Add feeds from an OPML file", { go: click("import-btn") }),
       row("Export feeds", "Save all your feeds as an OPML file", { go: click("export-btn") })
     ]);
+    const app = window.ReaderApp;
+    if (app) section("App", [
+      app.checkUpdate
+        ? row("App update", "Build " + Upd.mine() + (Upd.latest > Upd.mine() ? " · build " + Upd.latest + " is ready" : Upd.checked ? " · up to date" : ""),
+            { value: Upd.busy ? "…" : Upd.latest > Upd.mine() ? "Update" : "Check", go: () => Upd.latest > Upd.mine() ? Upd.install() : Upd.check(true) })
+        : row("App update", "This version can't update itself: download BT-Feeder.apk once more from the Releases page", { go: () => window.open("https://github.com/BtheHero/reader/releases/tag/app-latest", "_blank") })
+    ]);
     const about = el("p", "setabout", "BT Feeder · following " + S.feeds.length + " feed" + (S.feeds.length === 1 ? "" : "s"));
     body.append(about);
     body.parentNode.scrollTop = top;
@@ -3184,6 +3191,54 @@
   // Coming back to the app after a while counts as opening it again
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshStale(); });
 
+  // ---------- Updating the Android app from inside it ----------
+  // The app checks the build number published next to its APK (on launch, at most every 6 hours, and from
+  // Settings > App update). Its web part needs nothing: it's the live site, always the newest.
+  const Upd = {
+    latest: 0, checked: false, busy: false, asked: false,
+    mine() { try { return +window.ReaderApp.appBuild() || 0; } catch (e) { return 0; } },
+    check(byHand) {
+      const app = window.ReaderApp;
+      if (!app || !app.checkUpdate || this.busy) return;
+      this.byHand = byHand;
+      if (byHand) toast("Checking for an update…");
+      try { localStorage.setItem("updChecked", String(Date.now())); } catch (e) { /* fine */ }
+      app.checkUpdate();
+    },
+    install() {
+      if (this.busy) return;
+      this.busy = true;
+      toast("Downloading the update…");
+      try { window.ReaderApp.installUpdate(); } catch (e) { this.busy = false; }
+    }
+  };
+  window.ReaderUpdate = {
+    onCheck(mine, latest) {
+      Upd.checked = latest > 0;
+      if (latest < 0) { if (Upd.byHand) toast("Couldn't check for an update (offline?)"); }
+      else {
+        Upd.latest = latest;
+        if (latest > mine) toast("A new version of the app is ready (build " + latest + ")", "Update", () => Upd.install());
+        else if (Upd.byHand) toast("The app is up to date");
+      }
+      if (document.body.classList.contains("insettings")) renderSettings();
+    },
+    onStatus(state, detail) {
+      if (state === "downloading") { toast("Downloading the update… " + (+detail >= 0 ? detail + "%" : "")); return; }
+      if (state === "permission") { toast("Allow “Install unknown apps” for BT Feeder, then come back"); return; }
+      Upd.busy = false;
+      if (state === "installing") toast("Installing… BT Feeder closes to update; open it again after");
+      else if (state === "cancelled") toast("Update cancelled");
+      else if (state === "failed") toast("The update didn't install" + (detail ? ": " + detail.slice(0, 80) : ""), "Retry", () => Upd.install());
+      if (document.body.classList.contains("insettings")) renderSettings();
+    }
+  };
+  function autoCheck() {
+    let last = 0;
+    try { last = +localStorage.getItem("updChecked") || 0; } catch (e) { /* fine */ }
+    if (Date.now() - last > 6 * 3600000) setTimeout(() => Upd.check(false), 4000);
+  }
+
   // ---------- Start ----------
 
   // X posts saved before video support don't know they're videos: work it out from their saved text
@@ -3307,6 +3362,7 @@
     podDurations();
     refreshStale();
     Account.init(accountApi);
+    autoCheck();
     Music.init({ el, toast, ask, fetchBatch, tellApp, selectMusic: () => selectView("music"),
       stopOthers: () => { stopPlayer(); if (Pod.item) $("pb-close").click(); } });
     if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});

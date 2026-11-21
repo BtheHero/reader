@@ -225,7 +225,13 @@ a new build, and adds what a website can't do:
   podcasts, played through YouTube's player). The app ignores that (`ReaderWebView`) and keeps the screen on only
   while the page says you're watching a video (a video playing in a post, or a podcast's video made big).
 - The Music tab's folder (see Music).
+- **Updates itself:** the app checks the build number published next to the APK (`version.txt` on the `app-latest`
+  release) on launch (at most every 6 hours) and from **Settings → App update**. "Update" downloads the new APK inside
+  the app and installs it over itself through Android's package installer (`Updater.java`): Android asks once to allow
+  installs from BT Feeder, then shows its confirm screen (from Android 12, not any more once BT Feeder has installed
+  itself once). The app closes to update; open it again. The web part never needs this: it's the live site.
+  Builds from before this feature need one last manual download.
 
 Built by GitHub Actions (`.github/workflows/android.yml`) on every change under `android/`, and published at
-**https://github.com/ilyasbt/reader/releases/tag/app-latest** → `BT-Feeder.apk`. Signing uses the repository secrets
+**https://github.com/BtheHero/reader/releases/tag/app-latest** → `BT-Feeder.apk`. Signing uses the repository secrets
 `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD`, so each build installs over the previous one.

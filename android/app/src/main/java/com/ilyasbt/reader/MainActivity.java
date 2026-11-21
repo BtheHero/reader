@@ -16,6 +16,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Message;
 import android.provider.DocumentsContract;
+import android.provider.Settings;
 import android.provider.MediaStore;
 import android.view.View;
 import android.view.ViewGroup;
@@ -87,6 +88,49 @@ public class MainActivity extends ComponentActivity {
 
     // The running screen, so the notification's buttons can reach the page's player
     private static WeakReference<MainActivity> current = new WeakReference<>(null);
+
+    /** The in-app update's progress or outcome, for the page (window.ReaderUpdate in app.js) */
+    static void updateStatus(String state, String detail) {
+        MainActivity a = current.get();
+        if (a == null) return;
+        a.runOnUiThread(() -> a.web.evaluateJavascript("window.ReaderUpdate && window.ReaderUpdate.onStatus(" + JSONObject.quote(state) + "," + JSONObject.quote(detail) + ")", null));
+    }
+
+    private boolean installAfterPermission = false;
+
+    // Download the new version and install it; first, once, Android's "allow installs from this app"
+    private void startUpdate() {
+        if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
+            installAfterPermission = true;
+            updateStatus("permission", "");
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+            } catch (ActivityNotFoundException e) {
+                updateStatus("failed", "Allow BT Feeder to install apps in Android's settings");
+            }
+            return;
+        }
+        updateStatus("downloading", "0");
+        io.execute(() -> {
+            try {
+                Updater.install(this, p -> updateStatus("downloading", String.valueOf(p)));
+                updateStatus("installing", "");
+            } catch (Exception e) {
+                updateStatus("failed", String.valueOf(e.getMessage()));
+            }
+        });
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Back from Android's "allow installs" screen
+        if (installAfterPermission) {
+            installAfterPermission = false;
+            if (getPackageManager().canRequestPackageInstalls()) startUpdate();
+            else updateStatus("cancelled", "");
+        }
+    }
 
     /** A notification / headphone button: tell Reader's podcast player (window.ReaderPod in app.js) */
     static void podcast(String command) {
@@ -469,6 +513,29 @@ public class MainActivity extends ComponentActivity {
         @JavascriptInterface
         public void musicScan() {
             scanMusic();
+        }
+
+        /** This app's build number (the GitHub Actions run that built it) */
+        @JavascriptInterface
+        public long appBuild() {
+            return Updater.installedBuild(MainActivity.this);
+        }
+
+        /** Is a newer build published? Answers through ReaderUpdate.onCheck(installed, latest) (latest -1: couldn't check) */
+        @JavascriptInterface
+        public void checkUpdate() {
+            io.execute(() -> {
+                long latest;
+                try { latest = Updater.latestBuild(); } catch (Exception e) { latest = -1; }
+                long mine = Updater.installedBuild(MainActivity.this), l = latest;
+                runOnUiThread(() -> web.evaluateJavascript("window.ReaderUpdate && window.ReaderUpdate.onCheck(" + mine + "," + l + ")", null));
+            });
+        }
+
+        /** Download and install the newest build (progress through ReaderUpdate.onStatus) */
+        @JavascriptInterface
+        public void installUpdate() {
+            runOnUiThread(MainActivity.this::startUpdate);
         }
 
         /** Music tab: forget the folder */

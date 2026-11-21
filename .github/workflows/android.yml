@@ -50,8 +50,11 @@ jobs:
           VERSION_CODE: ${{ github.run_number }}
         run: gradle assembleRelease --no-daemon --stacktrace
 
+      # version.txt: this build's number, read by the app to offer the update (Settings > App update)
       - name: Name the APK
-        run: cp android/app/build/outputs/apk/release/app-release.apk BT-Feeder.apk
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk BT-Feeder.apk
+          echo "${{ github.run_number }}" > version.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -65,6 +68,9 @@ jobs:
           name: BT Feeder for Android
           body: |
             Latest build of BT Feeder for Android (build ${{ github.run_number }}, ${{ github.sha }}).
-            Download **BT-Feeder.apk** below on your phone and open it to install or update.
-          files: BT-Feeder.apk
+            Download **BT-Feeder.apk** below on your phone and open it to install. After that, the app updates itself
+            (Settings > App update).
+          files: |
+            BT-Feeder.apk
+            version.txt
           make_latest: true
