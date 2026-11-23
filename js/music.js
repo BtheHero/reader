@@ -33,6 +33,7 @@ const Music = (() => {
     listed: false,                    // the folder was listed this session
     tab: "home", sort: "title", stack: [], query: "",
     queue: [], order: null, qi: -1, shuffle: false, repeat: "off",
+    bar: "open",                      // "open" | "mini" | "closed": how the player was left
     playing: false, counted: false, listened: 0, lastT: 0, errors: 0, url: "",
     scanning: null, nowOpen: false, panel: "lyrics", lrc: null, lrcAt: -1,
     tg: null,                         // { token, bot, owner, offset, seen } your Telegram bot (this device only)
@@ -58,7 +59,7 @@ const Music = (() => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => Store.set("music", {
       v: 1, tracks: [...M.tracks.values()], playlists: M.playlists, artists: M.artists, source: M.source, tg: M.tg, dlBot: M.dlBot,
-      prefs: { tab: M.tab, sort: M.sort, shuffle: M.shuffle, repeat: M.repeat, queue: M.queue.slice(0, 3000), qi: M.qi, pos: audio.currentTime || 0 }
+      prefs: { tab: M.tab, sort: M.sort, shuffle: M.shuffle, repeat: M.repeat, queue: M.queue.slice(0, 3000), qi: M.qi, pos: audio.currentTime || 0, bar: M.bar }
     }).catch(() => {}), 500);
   }
   function saveArt() { clearTimeout(artTimer); artTimer = setTimeout(() => Store.set("musicart", Object.fromEntries(M.art)).catch(() => {}), 1500); }
@@ -1277,11 +1278,13 @@ const Music = (() => {
   function showBar() {
     $("m-bar").hidden = false;
     document.body.classList.add("musicking");
+    if (M.bar === "closed") { M.bar = "open"; save(); }
     $("m-mini").hidden = !document.body.classList.contains("musichide");
   }
   function hideBar(on) {
     document.body.classList.toggle("musichide", on);
     $("m-mini").hidden = !on || $("m-bar").hidden;
+    if (!$("m-bar").hidden) { M.bar = on ? "mini" : "open"; save(); }
     barUi();
   }
 
@@ -1321,6 +1324,7 @@ const Music = (() => {
     $("m-bar").hidden = true;
     $("m-mini").hidden = true;
     document.body.classList.remove("musicking", "musichide");
+    M.bar = "closed"; save();
     closeNow();
     if ("mediaSession" in navigator && navigator.mediaSession.metadata && M.sessionOn) {
       for (const a of ["play", "pause", "previoustrack", "nexttrack", "seekto"]) { try { navigator.mediaSession.setActionHandler(a, null); } catch (e) { /* fine */ } }
@@ -2144,13 +2148,14 @@ const Music = (() => {
         const p = d.prefs || {};
         M.sort = p.sort || "title"; M.shuffle = !!p.shuffle; M.repeat = p.repeat || "off";
         M.queue = (p.queue || []).filter(id => M.tracks.has(id)); M.qi = Math.min(p.qi == null ? -1 : p.qi, M.queue.length - 1); M.resumeAt = p.pos || 0;
+        M.bar = p.bar || "open";
       }
       for (const [k, v] of Object.entries(art || {})) M.art.set(k, v);
       if (dir) M.dir = dir;
       if (M.source && M.source.kind === "dir" && !M.dir) M.source = null;
     } catch (e) { /* nothing saved */ }
-    // The last song, ready to carry on (paused)
-    if (cur()) { barUi(); showBar(); }
+    // The last song, ready to carry on (paused), unless the player was closed
+    if (cur() && M.bar !== "closed") { if (M.bar === "mini") document.body.classList.add("musichide"); barUi(); showBar(); }
     render();
     // Songs sent to your Telegram bot: now, and every two minutes while BT Feeder is open
     setTimeout(() => tgPoll(false), 3000);
