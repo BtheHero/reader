@@ -1595,7 +1595,13 @@ const Music = (() => {
   // Charts and playlists come from Deezer's public API (through BT Feeder's fetcher: Deezer doesn't allow browsers)
   // and Apple Music's chart feed; kept for three hours. Songs you have play in full from your library; the others
   // play their 30-second preview, and ⋯ opens them in Spotify, Apple Music, YouTube Music, Deezer or SoundCloud.
-  const DISC = { at: 0, busy: false, failed: false, dz: [], playlists: [], albums: [], apple: [], cc: "" };
+  const DISC = { at: 0, busy: false, failed: false, dz: [], playlists: [], albums: [], apple: [], groups: [], cc: "" };
+  const GROUPS = [
+    { title: "Moods and activities", per: 5, q: ["chill", "focus", "workout", "party", "sleep", "road trip", "acoustic"] },
+    { title: "By genre", per: 4, q: ["pop hits", "hip hop", "rock classics", "electronic", "r&b soul", "latin", "jazz", "metal"] },
+    { title: "Throwbacks", per: 4, q: ["80s hits", "90s hits", "2000s hits", "2010s hits"] }
+  ];
+  const REC = { key: "", at: 0, busy: false, artists: [], songs: [], from: [] };
   const REM = new Map();                  // key -> a song from a platform: { key, title, artist, album, art, preview, dur, url, src }
   const remotes = new Map();              // "dzplaylist|id" / "dzalbum|id" -> { title, sub, art, url, tracks }
   const country = () => ((/[-_]([A-Za-z]{2})$/.exec(navigator.language || "") || [])[1] || "us").toLowerCase();
@@ -1611,11 +1617,19 @@ const Music = (() => {
     DISC.busy = true;
     const cc = country();
     try {
-      const urls = ["https://api.deezer.com/chart/0/tracks?limit=50", "https://api.deezer.com/chart/0/playlists?limit=24", "https://api.deezer.com/chart/0/albums?limit=24",
+      const urls = ["https://api.deezer.com/chart/0/tracks?limit=50", "https://api.deezer.com/chart/0/playlists?limit=40", "https://api.deezer.com/chart/0/albums?limit=24",
+        ...GROUPS.flatMap(g => g.q.map(q => "https://api.deezer.com/search/playlist?limit=" + g.per + "&q=" + encodeURIComponent(q))),
         "https://rss.marketingtools.apple.com/api/v2/" + cc + "/music/most-played/50/songs.json"];
       const res = await A.fetchBatch(urls);
       const j = (r) => { try { return r && r.ok ? JSON.parse(r.body) : null; } catch (e) { return null; } };
-      const [tr, pl, al, ap] = res.map(j);
+      const [tr, pl, al, ...rest] = res.map(j);
+      const ap = rest.pop();
+      let gi = 0;
+      DISC.groups = GROUPS.map(g => {
+        const seen = new Set(), items = [];
+        for (const q of g.q) { const r1 = rest[gi++]; for (const x of (r1 && r1.data) || []) if (x && x.id && !seen.has(x.id)) { seen.add(x.id); items.push({ id: x.id, title: x.title, art: x.picture_medium || x.picture_big, sub: x.nb_tracks ? plural(x.nb_tracks, "song") : "Playlist" }); } }
+        return { title: g.title, items };
+      }).filter(g => g.items.length);
       if (!tr && !ap) throw new Error("offline");
       if (tr) DISC.dz = (tr.data || []).map(x => fromDeezer(x));
       if (pl) DISC.playlists = (pl.data || []).map(x => ({ id: x.id, title: x.title, art: x.picture_medium || x.picture_big, sub: x.nb_tracks ? plural(x.nb_tracks, "song") : "Playlist" }));
@@ -1631,9 +1645,39 @@ const Music = (() => {
       }
       DISC.at = Date.now();
       DISC.failed = false;
-      Store.set("musicdisc", { at: DISC.at, dz: DISC.dz, playlists: DISC.playlists, albums: DISC.albums, apple: DISC.apple, cc: DISC.cc }).catch(() => {});
+      Store.set("musicdisc", { at: DISC.at, dz: DISC.dz, playlists: DISC.playlists, albums: DISC.albums, apple: DISC.apple, groups: DISC.groups, cc: DISC.cc }).catch(() => {});
     } catch (e) { DISC.failed = true; DISC.failedAt = Date.now(); }
     finally { DISC.busy = false; }
+    if (document.body.classList.contains("inmusic") && M.tab === "home" && !M.stack.length) render();
+  }
+
+  // Recommendations from your library: related artists and songs for the artists you listen to most (Deezer)
+  async function recommend() {
+    if (REC.busy) return;
+    const score = new Map();
+    for (const t of songs()) { const a = mainArtist(t); if (a === "Unknown artist") continue; score.set(a, (score.get(a) || 0) + 1 + (t.plays || 0) * 2 + (t.liked ? 3 : 0)); }
+    const top = [...score.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(e => e[0]);
+    const key = top.join("|");
+    if (!top.length || (key === REC.key && (REC.at ? Date.now() - REC.at < 3 * 3600000 : Date.now() - (REC.failedAt || 0) < 120000))) return;
+    REC.busy = true; REC.key = key; REC.at = 0; REC.failedAt = 0;
+    try {
+      const found = await A.fetchBatch(top.map(a => "https://api.deezer.com/search/artist?limit=1&q=" + encodeURIComponent(a)));
+      const ids = found.map((r1, i) => { try { const d = JSON.parse(r1.body).data[0]; return d && norm(d.name) === norm(top[i]) ? { id: d.id, name: d.name } : null; } catch (e) { return null; } }).filter(Boolean);
+      if (!ids.length) throw new Error("none");
+      const res = await A.fetchBatch(ids.flatMap(a => ["https://api.deezer.com/artist/" + a.id + "/related?limit=12", "https://api.deezer.com/artist/" + a.id + "/radio?limit=15"]));
+      const mine = new Set(top.map(norm)), seen = new Set(), artists = [], songs = [], skey = new Set();
+      res.forEach((r1, i) => {
+        let d = null; try { d = r1 && r1.ok ? JSON.parse(r1.body).data : null; } catch (e) { /* skip */ }
+        for (const x of d || []) {
+          if (i % 2 === 0) { if (!seen.has(x.id) && !mine.has(norm(x.name)) && !owned({ title: "", artist: x.name }) ) { seen.add(x.id); artists.push({ id: x.id, title: x.name, art: x.picture_medium || x.picture_big, sub: "Because you like " + ids[i >> 1].name }); } }
+          else { const rm = fromDeezer(x); if (!skey.has(rm.key) && !owned(rm)) { skey.add(rm.key); songs.push(rm); } }
+        }
+      });
+      // Shuffle a little so it isn't only the first artist's picks
+      songs.sort(() => Math.random() - 0.5);
+      REC.artists = artists.slice(0, 24); REC.songs = songs.slice(0, 40); REC.from = ids.map(a => a.name); REC.at = Date.now();
+    } catch (e) { REC.failedAt = Date.now(); REC.artists = []; REC.songs = []; }
+    finally { REC.busy = false; }
     if (document.body.classList.contains("inmusic") && M.tab === "home" && !M.stack.length) render();
   }
 
@@ -1733,16 +1777,26 @@ const Music = (() => {
     const top = songs().filter(t => t.plays > 0).sort((a, b) => b.plays - a.plays).slice(0, 5);
     if (top.length >= 3) { section(body, "Your most played"); body.append(songList(top, { plays: true })); }
 
+    // Recommended for you, from what's in your library
+    if (M.tracks.size) {
+      recommend();
+      if (REC.songs.length) { section(body, "Recommended songs", "chart|rec"); body.append(remoteList(REC.songs, false, 6)); }
+      if (REC.artists.length) { section(body, "Artists you might like"); body.append(cards(REC.artists, "dzartist")); }
+    }
+
     // Popular
     discover(false);
     if (!DISC.at) {
       body.append(el("p", "mempty-txt", DISC.failed ? "Couldn't load what's popular (offline?)." : "Loading what's popular…"));
       return;
     }
-    if (DISC.dz.length) { section(body, "Top songs · Deezer", "chart|dz"); body.append(remoteList(DISC.dz, true, 8)); }
+    const charts = [];
+    if (DISC.dz.length) charts.push({ id: "dz", art: DISC.dz[0].art, title: "Top songs · Deezer", sub: plural(DISC.dz.length, "song") });
+    if (DISC.apple.length) charts.push({ id: "ap", art: DISC.apple[0].art, title: "Top songs · Apple Music " + DISC.cc.toUpperCase(), sub: plural(DISC.apple.length, "song") });
+    if (charts.length) { section(body, "Top charts"); body.append(cards(charts, "chart")); }
     if (DISC.playlists.length) { section(body, "Popular playlists"); body.append(cards(DISC.playlists, "dzplaylist")); }
+    for (const g of DISC.groups || []) { section(body, g.title); body.append(cards(g.items, "dzplaylist")); }
     if (DISC.albums.length) { section(body, "Top albums"); body.append(cards(DISC.albums, "dzalbum")); }
-    if (DISC.apple.length) { section(body, "Top songs · Apple Music " + DISC.cc.toUpperCase(), "chart|ap"); body.append(remoteList(DISC.apple, true, 8)); }
     body.append(el("p", "msrc", "Charts from Deezer and Apple Music, updated every few hours. Songs that aren't in your music play a 30-second preview."));
   }
 
@@ -1751,7 +1805,8 @@ const Music = (() => {
     const prev = M.stack[M.stack.length - 2];
     back(body, prev ? "Back" : "Home");
     let d;
-    if (top.kind === "chart") d = top.id === "ap" ? { title: "Top songs", sub: "Apple Music · " + DISC.cc.toUpperCase(), tracks: DISC.apple, url: "https://music.apple.com/" + DISC.cc + "/new" } : { title: "Top songs", sub: "Deezer charts", tracks: DISC.dz, url: "https://www.deezer.com/charts" };
+    if (top.kind === "chart" && top.id === "rec") d = { title: "Recommended for you", sub: "Based on " + REC.from.join(", "), tracks: REC.songs, url: "https://www.deezer.com/" };
+    else if (top.kind === "chart") d = top.id === "ap" ? { title: "Top songs", sub: "Apple Music · " + DISC.cc.toUpperCase(), tracks: DISC.apple, url: "https://music.apple.com/" + DISC.cc + "/new" } : { title: "Top songs", sub: "Deezer charts", tracks: DISC.dz, url: "https://www.deezer.com/charts" };
     else d = remotes.get(key);
     if (!d) {
       body.append(el("p", "mempty-txt", "Loading…"));
