@@ -3,7 +3,7 @@
 // files (__music/, served by the Android app from your music folder) are left to the app.
 // Paths are relative to where Reader is served (its own site's root, or /reader/ on another site).
 // Bump VERSION whenever any file below changes, so devices pick up the new copy.
-const VERSION = "reader-v65";
+const VERSION = "reader-v66";
 const SHELL = ["./", "index.html", "style.css", "js/parse.js", "js/store.js", "js/app.js", "js/account.js", "js/music.js", "js/config.js", "manifest.webmanifest", "icons/icon.svg", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {
